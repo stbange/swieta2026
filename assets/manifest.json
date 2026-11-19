@@ -1,0 +1,21 @@
+{
+  "license": "CC BY 4.0",
+  "generator": "tools/gen_assets.py",
+  "custom_override_dir": "assets/custom/",
+  "levels": [
+    {
+      "day": 1,
+      "id": "day01_duke",
+      "title": "Neon Strip '96",
+      "inspiration": "Duke Nukem 3D (1996)",
+      "status": "playable"
+    },
+    {
+      "day": 24,
+      "id": "day24_redalert",
+      "title": "Operation: Chrono-Eve",
+      "inspiration": "C&C: Red Alert (1996)",
+      "status": "planned"
+    }
+  ]
+}

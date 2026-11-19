@@ -1,0 +1,93 @@
+#ifndef SWIETA_GL_LOADER_H
+#define SWIETA_GL_LOADER_H
+
+#include <stdbool.h>
+
+#ifdef __EMSCRIPTEN__
+#include <GLES3/gl3.h>
+static inline bool sw_gl_load_functions(void) { return true; }
+#else
+#include <SDL3/SDL.h>
+#include <SDL3/SDL_opengl.h>
+
+/* Desktop OpenGL 3.3 Core function pointers loaded via SDL_GL_GetProcAddress */
+extern PFNGLGENVERTEXARRAYSPROC sw_glGenVertexArrays;
+extern PFNGLDELETEVERTEXARRAYSPROC sw_glDeleteVertexArrays;
+extern PFNGLBINDVERTEXARRAYPROC sw_glBindVertexArray;
+extern PFNGLGENBUFFERSPROC sw_glGenBuffers;
+extern PFNGLDELETEBUFFERSPROC sw_glDeleteBuffers;
+extern PFNGLBINDBUFFERPROC sw_glBindBuffer;
+extern PFNGLBUFFERDATAPROC sw_glBufferData;
+extern PFNGLENABLEVERTEXATTRIBARRAYPROC sw_glEnableVertexAttribArray;
+extern PFNGLVERTEXATTRIBPOINTERPROC sw_glVertexAttribPointer;
+extern PFNGLCREATESHADERPROC sw_glCreateShader;
+extern PFNGLDELETESHADERPROC sw_glDeleteShader;
+extern PFNGLSHADERSOURCEPROC sw_glShaderSource;
+extern PFNGLCOMPILESHADERPROC sw_glCompileShader;
+extern PFNGLGETSHADERIVPROC sw_glGetShaderiv;
+extern PFNGLGETSHADERINFOLOGPROC sw_glGetShaderInfoLog;
+extern PFNGLCREATEPROGRAMPROC sw_glCreateProgram;
+extern PFNGLDELETEPROGRAMPROC sw_glDeleteProgram;
+extern PFNGLATTACHSHADERPROC sw_glAttachShader;
+extern PFNGLLINKPROGRAMPROC sw_glLinkProgram;
+extern PFNGLGETPROGRAMIVPROC sw_glGetProgramiv;
+extern PFNGLGETPROGRAMINFOLOGPROC sw_glGetProgramInfoLog;
+extern PFNGLUSEPROGRAMPROC sw_glUseProgram;
+extern PFNGLGETUNIFORMLOCATIONPROC sw_glGetUniformLocation;
+extern PFNGLUNIFORM1IPROC sw_glUniform1i;
+extern PFNGLUNIFORM1FPROC sw_glUniform1f;
+extern PFNGLUNIFORM2FPROC sw_glUniform2f;
+extern PFNGLUNIFORM3FPROC sw_glUniform3f;
+extern PFNGLUNIFORM4FPROC sw_glUniform4f;
+extern PFNGLUNIFORM4FVPROC sw_glUniform4fv;
+extern PFNGLUNIFORMMATRIX4FVPROC sw_glUniformMatrix4fv;
+extern PFNGLGENFRAMEBUFFERSPROC sw_glGenFramebuffers;
+extern PFNGLDELETEFRAMEBUFFERSPROC sw_glDeleteFramebuffers;
+extern PFNGLBINDFRAMEBUFFERPROC sw_glBindFramebuffer;
+extern PFNGLFRAMEBUFFERTEXTURE2DPROC sw_glFramebufferTexture2D;
+extern PFNGLCHECKFRAMEBUFFERSTATUSPROC sw_glCheckFramebufferStatus;
+extern PFNGLACTIVETEXTUREPROC sw_glActiveTexture;
+extern PFNGLDRAWBUFFERSPROC sw_glDrawBuffers;
+
+#define glGenVertexArrays sw_glGenVertexArrays
+#define glDeleteVertexArrays sw_glDeleteVertexArrays
+#define glBindVertexArray sw_glBindVertexArray
+#define glGenBuffers sw_glGenBuffers
+#define glDeleteBuffers sw_glDeleteBuffers
+#define glBindBuffer sw_glBindBuffer
+#define glBufferData sw_glBufferData
+#define glEnableVertexAttribArray sw_glEnableVertexAttribArray
+#define glVertexAttribPointer sw_glVertexAttribPointer
+#define glCreateShader sw_glCreateShader
+#define glDeleteShader sw_glDeleteShader
+#define glShaderSource sw_glShaderSource
+#define glCompileShader sw_glCompileShader
+#define glGetShaderiv sw_glGetShaderiv
+#define glGetShaderInfoLog sw_glGetShaderInfoLog
+#define glCreateProgram sw_glCreateProgram
+#define glDeleteProgram sw_glDeleteProgram
+#define glAttachShader sw_glAttachShader
+#define glLinkProgram sw_glLinkProgram
+#define glGetProgramiv sw_glGetProgramiv
+#define glGetProgramInfoLog sw_glGetProgramInfoLog
+#define glUseProgram sw_glUseProgram
+#define glGetUniformLocation sw_glGetUniformLocation
+#define glUniform1i sw_glUniform1i
+#define glUniform1f sw_glUniform1f
+#define glUniform2f sw_glUniform2f
+#define glUniform3f sw_glUniform3f
+#define glUniform4f sw_glUniform4f
+#define glUniform4fv sw_glUniform4fv
+#define glUniformMatrix4fv sw_glUniformMatrix4fv
+#define glGenFramebuffers sw_glGenFramebuffers
+#define glDeleteFramebuffers sw_glDeleteFramebuffers
+#define glBindFramebuffer sw_glBindFramebuffer
+#define glFramebufferTexture2D sw_glFramebufferTexture2D
+#define glCheckFramebufferStatus sw_glCheckFramebufferStatus
+#define glActiveTexture sw_glActiveTexture
+#define glDrawBuffers sw_glDrawBuffers
+
+bool sw_gl_load_functions(void);
+#endif
+
+#endif /* SWIETA_GL_LOADER_H */

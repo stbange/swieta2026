@@ -1,0 +1,39 @@
+name: Deploy Web Playtest to gh-pages
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: mymindstorm/setup-emsdk@v14
+        with:
+          version: latest
+
+      - name: Install build tools
+        run: sudo apt-get update && sudo apt-get install -y ninja-build
+
+      - name: Build Web/WebXR Playtest Bundle
+        run: |
+          python3 tools/gen_assets.py
+          emcmake cmake -B build-web -G Ninja -DCMAKE_BUILD_TYPE=Release -DSWIETA_BUILD_TESTS=OFF
+          cmake --build build-web
+          mkdir -p dist
+          cp build-web/index.html build-web/swieta2026.js build-web/swieta2026.wasm build-web/webrtc_bridge.js build-web/webxr_bridge.js dist/
+          touch dist/.nojekyll
+
+      - name: Publish to gh-pages branch
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_branch: gh-pages
+          publish_dir: ./dist
+          commit_message: "Deploy Web/WebXR playtest build from ${{ github.sha }}"

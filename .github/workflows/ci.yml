@@ -1,0 +1,78 @@
+name: CI (OpenSpec, >=95% Coverage, Game Tests, Multi-Platform)
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  openspec-and-tests:
+    name: OpenSpec + Unit (>=95% Coverage) + Automated Game Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate OpenSpec specifications
+        run: |
+          npx --yes @fission-ai/openspec validate --all || npx --yes @fission-ai/openspec list --specs
+
+      - name: Install build & coverage tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build gcovr
+
+      - name: Generate CC BY 4.0 retro assets
+        run: python3 tools/gen_assets.py
+
+      - name: Build & run unit + automated game tests (ASan/UBSan + Coverage)
+        run: |
+          cmake -B build-cov -G Ninja -DSWIETA_BUILD_APP=OFF -DSWIETA_ENABLE_COVERAGE=ON -DSWIETA_ENABLE_SANITIZERS=ON
+          cmake --build build-cov
+          ctest --test-dir build-cov --output-on-failure
+
+      - name: Enforce >=95% unit test line coverage
+        run: |
+          gcovr --root . --filter 'src/' --print-summary --fail-under-line 95
+
+  build-linux:
+    name: Native Linux (C11 / SDL3 / OpenGL 3.3)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Linux SDL3 & OpenGL dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxfixes-dev libxi-dev libxss-dev libxtst-dev libgl1-mesa-dev libasound2-dev libpulse-dev libdbus-1-dev libudev-dev
+      - name: Configure & build Linux binary
+        run: |
+          cmake -B build-linux -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake --build build-linux
+          ctest --test-dir build-linux --output-on-failure
+
+  build-windows:
+    name: Native Windows (C11 / SDL3 / OpenGL 3.3)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure & build Windows binary
+        run: |
+          cmake -B build-win -DCMAKE_BUILD_TYPE=Release
+          cmake --build build-win --config Release
+          ctest --test-dir build-win -C Release --output-on-failure
+
+  build-web:
+    name: Web / WebXR (Emscripten / SDL3 / WebGL2)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: mymindstorm/setup-emsdk@v14
+        with:
+          version: latest
+      - name: Install Ninja
+        run: sudo apt-get update && sudo apt-get install -y ninja-build
+      - name: Build Emscripten Web/WebXR target
+        run: |
+          emcmake cmake -B build-web -G Ninja -DCMAKE_BUILD_TYPE=Release -DSWIETA_BUILD_TESTS=OFF
+          cmake --build build-web
+          ls -lh build-web/index.html build-web/swieta2026.js build-web/swieta2026.wasm

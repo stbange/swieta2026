@@ -1,0 +1,33 @@
+# Build artifacts
+build/
+build-*/
+dist/
+out/
+*.o
+*.obj
+*.a
+*.so
+*.dll
+*.exe
+*.wasm
+*.data
+
+# Coverage & sanitizers
+*.gcda
+*.gcno
+*.gcov
+coverage/
+coverage.xml
+coverage.html
+
+# Node / Python tooling
+node_modules/
+__pycache__/
+*.pyc
+.venv/
+
+# IDE & OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
