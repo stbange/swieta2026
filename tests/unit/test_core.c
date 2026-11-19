@@ -298,11 +298,33 @@ static void test_world_hub_preview_and_combat_edges(void) {
     world_load_day(&w, 1);
     ASSERT_EQ_INT(w.scene, SCENE_HUB);
 
-    /* Interacting with SANTA-BIOS terminal */
+    /* Vertical grounding stability: zero bounce while standing still or walking on flat floor */
     PlayerInput in[WORLD_MAX_PLAYERS];
     memset(in, 0, sizeof(in));
     for (int i = 0; i < WORLD_MAX_PLAYERS; ++i) in[i].select_weapon = -1;
-    w.players[0].pos = vec3_make(24.0f, 1.01f, 18.0f);
+    for (int t = 0; t < 30; ++t) {
+        world_step(&w, in, WORLD_FIXED_DT);
+        ASSERT_NEAR(w.players[0].pos.y, 1.0f, 0.015f);
+        ASSERT_TRUE(w.players[0].on_ground);
+    }
+    in[0].move_y = 1.0f;
+    for (int t = 0; t < 20; ++t) {
+        world_step(&w, in, WORLD_FIXED_DT);
+        ASSERT_NEAR(w.players[0].pos.y, 1.0f, 0.015f);
+        ASSERT_TRUE(w.players[0].on_ground);
+    }
+    in[0].move_y = 0.0f;
+
+    /* Jump + ceiling clamp test */
+    w.players[0].pos = vec3_make(22.5f, 10.2f, 34.0f);
+    w.players[0].on_ground = true;
+    in[0].buttons = INP_JUMP;
+    world_step(&w, in, WORLD_FIXED_DT);
+    ASSERT_TRUE(w.players[0].pos.y <= 10.30f);
+    in[0].buttons = 0;
+
+    /* Interacting with SANTA-BIOS terminal */
+    w.players[0].pos = vec3_make(24.0f, 1.0f, 18.0f);
     in[0].buttons = INP_USE;
     world_step(&w, in, WORLD_FIXED_DT);
     ASSERT_TRUE((w.sound_events & SFX_SWITCH) != 0u);

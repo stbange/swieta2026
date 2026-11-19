@@ -213,7 +213,7 @@ void world_load_hub(GameWorld *w) {
     /* Spawn players near South-Center carpet facing tree & portals */
     for (int i = 0; i < WORLD_MAX_PLAYERS; ++i) {
         if (i < w->player_count) {
-            Vec3 sp = vec3_make(22.5f + (float)i * 1.3f, 1.01f, 34.0f);
+            Vec3 sp = vec3_make(22.5f + (float)i * 1.3f, 1.0f, 34.0f);
             reset_player_for_spawn(&w->players[i], sp, 0.0f, true);
         } else {
             w->players[i].active = false;
@@ -303,7 +303,7 @@ static void build_day01_duke(GameWorld *w) {
     /* Spawn players in snowy alley facing Neon Strip */
     for (int i = 0; i < WORLD_MAX_PLAYERS; ++i) {
         if (i < w->player_count) {
-            Vec3 sp = vec3_make(6.0f + (float)i * 1.1f, 1.01f, 38.0f);
+            Vec3 sp = vec3_make(6.0f + (float)i * 1.1f, 1.0f, 38.0f);
             reset_player_for_spawn(&w->players[i], sp, SW_PI * 0.35f, true);
         } else {
             w->players[i].active = false;
@@ -332,7 +332,7 @@ static void build_preview_chamber(GameWorld *w, int day) {
 
     for (int i = 0; i < WORLD_MAX_PLAYERS; ++i) {
         if (i < w->player_count) {
-            Vec3 sp = vec3_make(23.0f + (float)i * 1.1f, 1.01f, 28.0f);
+            Vec3 sp = vec3_make(23.0f + (float)i * 1.1f, 1.0f, 28.0f);
             reset_player_for_spawn(&w->players[i], sp, 0.0f, true);
         } else {
             w->players[i].active = false;
@@ -387,8 +387,8 @@ void world_set_player_count(GameWorld *w, int count) {
 static bool player_collides(const VoxelWorld *vw, Vec3 pos) {
     int x0 = (int)floorf(pos.x - kPlayerRadius);
     int x1 = (int)floorf(pos.x + kPlayerRadius);
-    int y0 = (int)floorf(pos.y + 0.05f);
-    int y1 = (int)floorf(pos.y + kPlayerHeight);
+    int y0 = (int)floorf(pos.y + 0.001f);
+    int y1 = (int)floorf(pos.y + kPlayerHeight - 0.001f);
     int z0 = (int)floorf(pos.z - kPlayerRadius);
     int z1 = (int)floorf(pos.z + kPlayerRadius);
 
@@ -588,7 +588,7 @@ static void step_player(GameWorld *w, int pi, const PlayerInput *inp, float dt) 
     if (p->hp <= 0) {
         p->respawn_timer -= dt;
         if (p->respawn_timer <= 0.0f) {
-            Vec3 sp = (w->scene == SCENE_DAY01) ? vec3_make(6.0f, 1.01f, 38.0f) : vec3_make(24.0f, 1.01f, 34.0f);
+            Vec3 sp = (w->scene == SCENE_DAY01) ? vec3_make(6.0f, 1.0f, 38.0f) : vec3_make(24.0f, 1.0f, 34.0f);
             reset_player_for_spawn(p, sp, p->yaw, true);
             set_banner(w, "RESPAWNED! GET BACK IN THE FIGHT!", 2.5f);
         }
@@ -644,20 +644,24 @@ static void step_player(GameWorld *w, int pi, const PlayerInput *inp, float dt) 
     }
 
     /* Axis-separated voxel collision + auto step-up */
-    Vec3 try_x = vec3_make(p->pos.x + p->vel.x * dt, p->pos.y, p->pos.z);
-    if (!player_collides(&w->voxels, try_x)) {
-        p->pos.x = try_x.x;
-    } else if (p->on_ground && !player_collides(&w->voxels, vec3_make(try_x.x, p->pos.y + 1.05f, p->pos.z))) {
-        p->pos.x = try_x.x;
-        p->pos.y += 1.02f;
+    if (fabsf(p->vel.x) > 1e-5f) {
+        Vec3 try_x = vec3_make(p->pos.x + p->vel.x * dt, p->pos.y, p->pos.z);
+        if (!player_collides(&w->voxels, try_x)) {
+            p->pos.x = try_x.x;
+        } else if (p->on_ground && !player_collides(&w->voxels, vec3_make(try_x.x, p->pos.y + 1.01f, p->pos.z))) {
+            p->pos.x = try_x.x;
+            p->pos.y = floorf(p->pos.y + 1.01f);
+        }
     }
 
-    Vec3 try_z = vec3_make(p->pos.x, p->pos.y, p->pos.z + p->vel.z * dt);
-    if (!player_collides(&w->voxels, try_z)) {
-        p->pos.z = try_z.z;
-    } else if (p->on_ground && !player_collides(&w->voxels, vec3_make(p->pos.x, p->pos.y + 1.05f, try_z.z))) {
-        p->pos.z = try_z.z;
-        p->pos.y += 1.02f;
+    if (fabsf(p->vel.z) > 1e-5f) {
+        Vec3 try_z = vec3_make(p->pos.x, p->pos.y, p->pos.z + p->vel.z * dt);
+        if (!player_collides(&w->voxels, try_z)) {
+            p->pos.z = try_z.z;
+        } else if (p->on_ground && !player_collides(&w->voxels, vec3_make(p->pos.x, p->pos.y + 1.01f, try_z.z))) {
+            p->pos.z = try_z.z;
+            p->pos.y = floorf(p->pos.y + 1.01f);
+        }
     }
 
     Vec3 try_y = vec3_make(p->pos.x, p->pos.y + p->vel.y * dt, p->pos.z);
@@ -666,8 +670,12 @@ static void step_player(GameWorld *w, int pi, const PlayerInput *inp, float dt) 
         p->on_ground = false;
     } else {
         if (p->vel.y < 0.0f) {
-            p->pos.y = floorf(p->pos.y) + 0.005f;
+            int hit_y = (int)floorf(try_y.y + 0.001f);
+            p->pos.y = (float)(hit_y + 1);
             p->on_ground = true;
+        } else if (p->vel.y > 0.0f) {
+            int hit_y = (int)floorf(try_y.y + kPlayerHeight - 0.001f);
+            p->pos.y = (float)hit_y - kPlayerHeight;
         }
         p->vel.y = 0.0f;
     }
