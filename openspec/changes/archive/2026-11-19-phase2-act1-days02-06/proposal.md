@@ -1,0 +1,15 @@
+# Proposal: Phase 2 — Act I Completion (Days 2–6: Classic Action & Arenas)
+
+## Why
+Phase 1.5 established the chunked textured `128×24×128` voxel engine and proved the 4-beat Gold Standard level loop on Day 1 (*Neon Strip '96*). Days 2–6 currently still load single-room preview chambers. Completing **Act I (*Boot Sequence*)** turns the entire West Wing of the Grand Festive Hall (Days 1–6) into six full, wildly distinct classic-action adventures leading up to the St. Nicholas Day *Doom* climax.
+
+## What Changes
+- **Modular Level & Mechanics Architecture (`src/sim/world_internal.h`, `src/sim/levels_act1.c`):** Extract shared entity/trigger helpers and add reusable Phase 2 gameplay modules: Ledge Grab/Mantling, Push-Blocks & Pressure Plates, Water Swimming & Lava/Slime Hazards, Buy-Crate Economy & C4 Defusal, Rocket-Jump Physics & Quad Damage & Slipgate Telefrags, Fire DoT / Alt-Fire Arsenals, Explosive Barrel Chain Reactions, and Monster Infighting.
+- **5 Full 4-Beat Act I Levels (`128×24×128`):**
+  - **Day 02 — Tomb Raider (*Vault of the Pixel Sun*):** Dual Pistols auto-lock & acrobatic dodge, Ledge Grab/Mantling, Push-Block pressure plates, 3-level Flooded Cistern water puzzle, throwable green Magnesium Flares, Rolling Boulder trap, and T-Rex valley boss (*Scion Prism* shard).
+  - **Day 03 — Counter-Strike (*de_yule_dust*):** Tactical Buy-Crate cash economy (`$`), movement-accuracy Carbine/Deagle/Scoped Sniper, Flashbang & Smoke utility grenades, and 2-site C4 Bomb Defusal with Defuse Kit (*Defusal Pliers* shard).
+  - **Day 04 — Quake (*Slipgate of Brass & Rust*):** Rocket-Jump physics, Quad Damage (4× + blue light), Super Nailgun & Thunderbolt (with underwater discharge), Slipgate teleporters with telefragging, Jump Pads, and Shambler boss (*Slipgate Rune* shard).
+  - **Day 05 — Blood (*Carnival of the Damned*):** Pitchfork, Flare Gun (burn DoT + alt-fire starburst), Aerosol Flamethrower (+ alt-fire Molotov), Dynamite TNT (+ alt-fire proximity mine), Voodoo Doll (+ alt-fire AoE curse), Ghost Train & Carnival Big Top Gargoyle Matriarch (*Crimson Chalice* shard).
+  - **Day 06 (Act I Climax) — Doom (*E1M24: Brimstone Hangar*):** Chainsaw, Double-Barrel Super Shotgun, Chaingun, Rocket Launcher, Yule-BFG 9000, 3-color Keycard labyrinth (`Blue/Yellow/Red`), Monster Infighting, Explosive Barrel chains, Berserk Pack & Radiation Suit, and Cyber-Titan boss (*Hellfire Key* shard).
+- **Renderer & UI Expansion:** Expand procedural retro voxel atlas to `512×96` (`48` tiles / `42` distinct materials), add 3D boss models (T-Rex, Shambler, Matriarch, Cyber-Titan), weapon viewmodels for all Act I guns, smoke/flare/lightning/barrel/boulder/push-block/C4 visuals, sniper scope & Quad/Berserk/Flash HUD effects, and an Act I selector in `web/index.html`.
+- **Testing & Quality Gates:** Automated 4-beat headless playthrough bots for ALL FIVE new days (Days 2–6), unit tests maintaining ≥95% line coverage (`gcovr`), ASan/UBSan clean, and headless Chrome WebGL2 visual verification across Act I biomes.

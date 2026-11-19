@@ -40,9 +40,16 @@ void retro_audio_trigger_events(RetroAudioSynth *synth, uint32_t ev) {
     if (ev & SFX_PORTAL)  add_voice(synth, 280.0f,   520.0f, 0.35f, 0.26f, 3);
     if (ev & SFX_HURT)    add_voice(synth, 220.0f,  -180.0f, 0.22f, 0.30f, 1);
     if (ev & SFX_SHARD)   add_voice(synth, 587.0f,   880.0f, 0.55f, 0.32f, 3);
-    if (ev & SFX_GLASS)   add_voice(synth, 1800.0f, -900.0f, 0.15f, 0.26f, 2);
-    if (ev & SFX_DOOR)    add_voice(synth, 140.0f,   110.0f, 0.26f, 0.22f, 1);
-    if (ev & SFX_SECRET)  add_voice(synth, 659.0f,   980.0f, 0.40f, 0.28f, 3);
+    if (ev & SFX_GLASS)     add_voice(synth, 1800.0f, -900.0f, 0.15f, 0.26f, 2);
+    if (ev & SFX_DOOR)      add_voice(synth, 140.0f,   110.0f, 0.26f, 0.22f, 1);
+    if (ev & SFX_SECRET)    add_voice(synth, 659.0f,   980.0f, 0.40f, 0.28f, 3);
+    if (ev & SFX_ROCKET)    add_voice(synth, 180.0f,  -120.0f, 0.30f, 0.34f, 2);
+    if (ev & SFX_LIGHTNING) add_voice(synth, 920.0f,   450.0f, 0.12f, 0.22f, 0);
+    if (ev & SFX_FLAME)     add_voice(synth, 310.0f,   -90.0f, 0.18f, 0.22f, 2);
+    if (ev & SFX_MELEE)     add_voice(synth, 260.0f,  -420.0f, 0.10f, 0.24f, 1);
+    if (ev & SFX_TELEPORT)  add_voice(synth, 340.0f,   960.0f, 0.32f, 0.28f, 3);
+    if (ev & SFX_QUAD)      add_voice(synth, 165.0f,   330.0f, 0.45f, 0.32f, 1);
+    if (ev & SFX_FLASH)     add_voice(synth, 2400.0f, -300.0f, 0.38f, 0.20f, 3);
 }
 
 static float next_noise(RetroAudioSynth *s) {
@@ -57,26 +64,29 @@ void retro_audio_render_samples(RetroAudioSynth *synth, SceneId scene, int shard
         return;
     }
 
-    /* Cozy festive music-box notes in Hub; punchy 90s action riff in Day 1 */
     static const float kHubNotes[16] = {
         329.6f, 329.6f, 329.6f, 0.0f, 329.6f, 329.6f, 329.6f, 0.0f,
         329.6f, 392.0f, 261.6f, 293.7f, 329.6f, 0.0f, 392.0f, 440.0f
     };
-    static const float kDukeBass[16] = {
+    static const float kActionBass[16] = {
         110.0f, 110.0f, 130.8f, 110.0f, 146.8f, 110.0f, 130.8f, 98.0f,
         110.0f, 110.0f, 164.8f, 146.8f, 130.8f, 110.0f, 98.0f,  110.0f
     };
 
+    bool action_scene = (scene == SCENE_DAY01 || (scene >= SCENE_DAY02 && scene <= SCENE_DAY06));
+    float tempo = action_scene ? (scene == SCENE_DAY06 ? 7.2f : (scene == SCENE_DAY02 ? 4.2f : 6.0f)) : 3.2f;
     const float dt = 1.0f / (float)AUDIO_SAMPLE_RATE;
     for (size_t i = 0; i < sample_count; ++i) {
         synth->song_time += dt;
-        int step = (int)(synth->song_time * (scene == SCENE_DAY01 ? 6.0f : 3.2f)) & 15;
-        float step_frac = fmodf(synth->song_time * (scene == SCENE_DAY01 ? 6.0f : 3.2f), 1.0f);
+        int step = (int)(synth->song_time * tempo) & 15;
+        float step_frac = fmodf(synth->song_time * tempo, 1.0f);
         float env = (step_frac < 0.85f) ? (1.0f - step_frac * 0.9f) : 0.0f;
 
         float music = 0.0f;
-        if (scene == SCENE_DAY01) {
-            float bf = kDukeBass[step];
+        if (action_scene) {
+            float pitch_mul = (scene == SCENE_DAY04 || scene == SCENE_DAY05) ? 0.82f :
+                              (scene == SCENE_DAY06 ? 1.12f : 1.0f);
+            float bf = kActionBass[step] * pitch_mul;
             synth->bass_phase += bf * dt;
             if (synth->bass_phase >= 1.0f) synth->bass_phase -= 1.0f;
             float saw = (synth->bass_phase * 2.0f - 1.0f);
@@ -88,7 +98,6 @@ void retro_audio_render_samples(RetroAudioSynth *synth, SceneId scene, int shard
                 if (synth->music_phase >= 1.0f) synth->music_phase -= 1.0f;
                 music = sinf(synth->music_phase * 2.0f * SW_PI) * 0.06f * env;
                 if (shard_count > 0) {
-                    /* Add bright festive shimmer overtone as shards are collected */
                     music += sinf(synth->music_phase * 4.0f * SW_PI) * 0.025f * env;
                 }
             }

@@ -1,0 +1,8 @@
+# Tasks: Phase 2 — Act I Completion (Days 2–6)
+
+- [x] 1. Expand `src/render/voxel_mesher.h/.c` to `16×3` atlas layout with 42 retro materials (Sandstone, Water, Lava, Slime, Rust Brass, Crate, Yellow Door, Carnival Stripes, Crypt Stone, Tech Wall, Push-Block, Spikes, Slipgate) and passable liquid volumes.
+- [x] 2. Extend `src/sim/world.h`, create `src/sim/world_internal.h`, and upgrade `src/sim/world.c` with 5-slot per-level weapon loadouts, Ledge Mantling, Swimming & Hazards, Rocket-Jump knockback, Quad Damage, Burn DoT, Flash-Blindness & Smoke, Explosive Barrel chains, Monster Infighting, Push-Blocks, Switches, Teleporters/Telefrags, Jump Pads, and Rolling Boulders.
+- [x] 3. Implement `src/sim/levels_act1.h/.c` with full 4-beat `128×24×128` levels, puzzles, secrets, checkpoints, and bosses for Day 2 (Tomb Raider), Day 3 (Counter-Strike), Day 4 (Quake), Day 5 (Blood), and Day 6 (Doom), and wire into `CMakeLists.txt`.
+- [x] 4. Upgrade `src/render/gl_renderer.c`, `src/audio/retro_audio.c`, `src/platform/sdl_main.c`, and `web/index.html` with `512×96` retro texture atlas, all Act I weapon viewmodels, 3D boss silhouettes, props/VFX, biome lighting/skies, and Act I Day selector.
+- [x] 5. Add comprehensive unit tests (`tests/unit/test_core.c`) and automated 4-beat headless playthrough bots for Days 2, 3, 4, 5, and 6 (`tests/game/test_game_playthrough.c`) maintaining ≥95% line coverage (`gcovr`, currently 97.3% lines / 100.0% functions) under ASan/UBSan.
+- [x] 6. Visually verify Days 2–6 in headless Chrome with zero WebGL2 errors, archive OpenSpec change, push to `main`, verify multi-OS CI green, and deploy to `gh-pages`.

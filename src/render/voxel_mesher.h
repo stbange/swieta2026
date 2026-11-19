@@ -19,7 +19,7 @@
 #define VOX_TOTAL_CELLS (VOX_WORLD_X * VOX_WORLD_Y * VOX_WORLD_Z)
 
 #define VOX_ATLAS_COLS 16
-#define VOX_ATLAS_ROWS 2
+#define VOX_ATLAS_ROWS 3
 
 typedef enum {
     VOX_AIR = 0,
@@ -27,7 +27,7 @@ typedef enum {
     VOX_WOOD = 2,
     VOX_SNOW = 3,
     VOX_BRICK = 4,
-    VOX_CRACKED = 5,         /* Destructible by Remote Pipebomb */
+    VOX_CRACKED = 5,         /* Destructible by Remote Pipebomb / TNT */
     VOX_NEON_PINK = 6,
     VOX_NEON_CYAN = 7,
     VOX_GOLD = 8,
@@ -51,7 +51,20 @@ typedef enum {
     VOX_SEAT = 26,           /* Red velvet theater seats */
     VOX_GIFT = 27,           /* Festive gift boxes / props */
     VOX_RELAY_CORE = 28,     /* Destructible KRAMPUS broadcast relay */
-    VOX_TYPE_COUNT = 29
+    VOX_SANDSTONE = 29,      /* Day 2 Temple / Day 3 de_yule_dust sandstone */
+    VOX_WATER = 30,          /* Passable shimmering water volume */
+    VOX_LAVA = 31,           /* Glowing molten lava hazard */
+    VOX_SLIME = 32,          /* Radioactive green Doom nukage pit */
+    VOX_RUST_BRASS = 33,     /* Day 4 Quake riveted weathered copper/brass */
+    VOX_CRATE = 34,          /* Day 3 Counter-Strike wooden bombsite crates */
+    VOX_DOOR_YELLOW = 35,    /* Day 6 Doom Yellow Keycard security door */
+    VOX_RED_CARNIVAL = 36,   /* Day 5 Blood crimson/cream carnival tent */
+    VOX_CRYPT_STONE = 37,    /* Day 5 Blood dark mossy gothic crypt */
+    VOX_TECH_WALL = 38,      /* Day 6 Doom UAC-homage ribbed steel panels */
+    VOX_PUSH_BLOCK = 39,     /* Day 2 Tomb Raider carved push-monolith */
+    VOX_SPIKES = 40,         /* Passable floor spike trap */
+    VOX_SLIPGATE = 41,       /* Day 4 Quake swirling purple-copper slipgate */
+    VOX_TYPE_COUNT = 42
 } VoxelType;
 
 typedef struct {

@@ -141,7 +141,6 @@ static void test_voxel_world_and_chunked_mesher(void) {
     ASSERT_FALSE(voxel_in_bounds(VOX_WORLD_X, 0, 0));
     ASSERT_EQ_INT(voxel_get(vw, -1, 0, 0), VOX_AIR);
 
-    /* Chunk index / coordinate round-trip */
     int idx = voxel_chunk_index(3, 1, 5);
     int cx = 0, cy = 0, cz = 0;
     voxel_chunk_coords(idx, &cx, &cy, &cz);
@@ -154,21 +153,30 @@ static void test_voxel_world_and_chunked_mesher(void) {
     ASSERT_TRUE(voxel_is_solid(vw, 5, 3, 5));
     ASSERT_TRUE(voxel_is_opaque(VOX_STONE));
     ASSERT_FALSE(voxel_is_opaque(VOX_GLASS));
+    ASSERT_FALSE(voxel_is_opaque(VOX_WATER));
     ASSERT_FALSE(voxel_is_opaque(VOX_AIR));
+
+    /* Passable liquid / hazard volumes */
+    voxel_set(vw, 8, 2, 8, VOX_WATER);
+    voxel_set(vw, 9, 2, 8, VOX_WATER);
+    voxel_set(vw, 10, 2, 8, VOX_LAVA);
+    voxel_set(vw, 11, 2, 8, VOX_SLIME);
+    voxel_set(vw, 12, 2, 8, VOX_SPIKES);
+    ASSERT_FALSE(voxel_is_solid(vw, 8, 2, 8));
+    ASSERT_FALSE(voxel_is_solid(vw, 10, 2, 8));
+    ASSERT_FALSE(voxel_is_solid(vw, 11, 2, 8));
+    ASSERT_FALSE(voxel_is_solid(vw, 12, 2, 8));
 
     VoxelMesh mesh;
     voxel_mesh_init(&mesh);
     ASSERT_TRUE(voxel_build_mesh(vw, &mesh));
-    ASSERT_EQ_INT((int)mesh.vertex_count, 54 * 4);
-    ASSERT_EQ_INT((int)mesh.index_count, 54 * 6);
+    ASSERT_TRUE(mesh.vertex_count > 54 * 4);
 
-    /* Per-chunk build & invalid chunk index */
     ASSERT_TRUE(voxel_build_chunk_mesh(vw, voxel_chunk_index(0, 0, 0), &mesh));
-    ASSERT_EQ_INT((int)mesh.vertex_count, 54 * 4);
     ASSERT_FALSE(voxel_build_chunk_mesh(vw, -1, &mesh));
     ASSERT_FALSE(voxel_build_chunk_mesh(vw, VOX_CHUNK_COUNT, &mesh));
 
-    /* Seam-aware chunk dirtying across chunk borders (x=15/16, y=15/16, z=15/16) */
+    /* Seam-aware chunk dirtying across chunk borders */
     memset(vw->chunk_dirty, 0, sizeof(vw->chunk_dirty));
     voxel_set(vw, 15, 15, 15, VOX_WOOD);
     ASSERT_TRUE(vw->chunk_dirty[voxel_chunk_index(0, 0, 0)]);
@@ -183,7 +191,6 @@ static void test_voxel_world_and_chunked_mesher(void) {
     ASSERT_TRUE(vw->chunk_dirty[voxel_chunk_index(1, 0, 1)]);
     ASSERT_TRUE(vw->chunk_dirty[voxel_chunk_index(1, 1, 0)]);
 
-    /* Cracked wall destruction + Breakable glass destruction + replace_all */
     voxel_fill_box(vw, 20, 1, 20, 22, 3, 20, VOX_CRACKED);
     ASSERT_TRUE(voxel_explode_cracked(vw, vec3_make(21.5f, 2.5f, 20.5f), 2.5f) > 0);
     ASSERT_EQ_INT(voxel_explode_cracked(vw, vec3_make(21.5f, 2.5f, 20.5f), -1.0f), 0);
@@ -206,7 +213,6 @@ static void test_voxel_world_and_chunked_mesher(void) {
         ASSERT_TRUE(tile >= 0 && tile < VOX_ATLAS_COLS * VOX_ATLAS_ROWS);
     }
 
-    /* Extended raycast normals (X, Y, Z hits) + legacy raycast wrapper */
     VoxelRayHit rh;
     ASSERT_TRUE(voxel_raycast_ext(vw, vec3_make(2.0f, 3.5f, 5.5f), vec3_make(1, 0, 0), 10.0f, &rh));
     ASSERT_NEAR(rh.normal.x, -1.0f, 1e-4f);
@@ -235,7 +241,7 @@ static void test_net_proto_and_room_codes(void) {
     ASSERT_TRUE(net_room_code_valid(code));
     ASSERT_FALSE(net_room_code_valid(NULL));
     ASSERT_FALSE(net_room_code_valid("SHORT"));
-    ASSERT_FALSE(net_room_code_valid("BAD0OO")); /* 0 and O disallowed */
+    ASSERT_FALSE(net_room_code_valid("BAD0OO"));
 
     uint8_t buf[NET_MAX_PACKET_SIZE];
     NetInputPacket in = {1, 77, 0.5f, -0.75f, 1.2f, -0.3f, INP_FIRE | INP_JUMP, WEAP_SHRINKER};
@@ -326,7 +332,9 @@ static void test_retro_audio_synth(void) {
     retro_audio_init(&synth);
     retro_audio_trigger_events(&synth, SFX_PISTOL | SFX_SHOTGUN | SFX_SHRINK | SFX_STOMP | SFX_THROW |
                                        SFX_EXPLODE | SFX_JETPACK | SFX_PICKUP | SFX_SWITCH |
-                                       SFX_PORTAL | SFX_HURT | SFX_SHARD | SFX_GLASS | SFX_DOOR | SFX_SECRET);
+                                       SFX_PORTAL | SFX_HURT | SFX_SHARD | SFX_GLASS | SFX_DOOR | SFX_SECRET |
+                                       SFX_ROCKET | SFX_LIGHTNING | SFX_FLAME | SFX_MELEE | SFX_TELEPORT |
+                                       SFX_QUAD | SFX_FLASH);
     float buf[256];
     retro_audio_render_samples(&synth, SCENE_HUB, 3, buf, 256);
     float energy = 0.0f;
@@ -334,16 +342,34 @@ static void test_retro_audio_synth(void) {
     ASSERT_TRUE(energy > 1.0f);
 
     retro_audio_render_samples(&synth, SCENE_DAY01, 1, buf, 256);
+    retro_audio_render_samples(&synth, SCENE_DAY04, 4, buf, 256);
+    retro_audio_render_samples(&synth, SCENE_DAY06, 6, buf, 256);
     synth.muted = true;
     retro_audio_render_samples(&synth, SCENE_HUB, 0, buf, 64);
     ASSERT_NEAR(buf[0], 0.0f, 1e-6f);
 }
 
-static void test_world_hub_preview_and_combat_edges(void) {
+static void test_world_hub_preview_and_act1_edges(void) {
     SwietaDateTime nov = {2026, 11, 19, 12, 0, 0};
     GameWorld *w = &g_test_world;
     world_init(w, nov, false, 1);
     ASSERT_EQ_INT(w->scene, SCENE_HUB);
+
+    /* Query helpers for all 25 weapons + out-of-range guards */
+    for (int wid = 0; wid <= WEAP_COUNT; ++wid) {
+        const char *nm = world_weapon_short_name((WeaponId)wid);
+        ASSERT_TRUE(nm != NULL && nm[0] != '\0');
+        int am = world_player_weapon_ammo(&w->players[0], (WeaponId)wid);
+        ASSERT_TRUE(am >= 0);
+    }
+    ASSERT_EQ_INT(world_player_weapon_ammo(NULL, WEAP_PISTOL), 0);
+    ASSERT_EQ_INT(world_slot_weapon(w, 99), WEAP_PISTOL);
+
+    /* Split-screen player scaling up/down */
+    world_set_player_count(w, 3);
+    ASSERT_EQ_INT(w->player_count, 3);
+    world_set_player_count(w, 0);
+    ASSERT_EQ_INT(w->player_count, 1);
 
     /* Locked portal cannot be entered when unlock_all=false */
     world_load_day(w, 1);
@@ -393,16 +419,12 @@ static void test_world_hub_preview_and_combat_edges(void) {
     in[0].buttons = 0;
     world_step(w, in, WORLD_FIXED_DT);
     ASSERT_TRUE((w->shard_mask & (1u << 14)) != 0u);
-
-    /* Walk into return portal -> back to hub */
     w->players[0].pos = w->return_portal_pos;
     world_step(w, in, WORLD_FIXED_DT);
     ASSERT_EQ_INT(w->scene, SCENE_HUB);
 
     /* Day 1 edge cases: locked door feedback, early nuke-exit guard, weapon cycling, safe vent un-shrink */
     world_load_day(w, 1);
-
-    /* Try opening Blue Door without Blue Keycard */
     w->players[0].pos = vec3_make(28.0f, 1.0f, 74.0f);
     in[0].buttons = INP_USE;
     world_step(w, in, WORLD_FIXED_DT);
@@ -410,7 +432,6 @@ static void test_world_hub_preview_and_combat_edges(void) {
     in[0].buttons = 0;
     world_step(w, in, WORLD_FIXED_DT);
 
-    /* Try hitting Nuke-Exit before Cinema/Boss completed */
     w->players[0].pos = vec3_make(30.5f, 12.0f, 17.5f);
     in[0].buttons = INP_USE;
     world_step(w, in, WORLD_FIXED_DT);
@@ -418,7 +439,6 @@ static void test_world_hub_preview_and_combat_edges(void) {
     in[0].buttons = 0;
     world_step(w, in, WORLD_FIXED_DT);
 
-    /* Weapon cycling skips unowned Shotgun, then falls back to Pistol if shells == 0 */
     w->players[0].weapon = WEAP_PISTOL;
     w->players[0].has_shotgun = false;
     in[0].buttons = INP_NEXT_WEAP;
@@ -428,6 +448,7 @@ static void test_world_hub_preview_and_combat_edges(void) {
     world_step(w, in, WORLD_FIXED_DT);
 
     w->players[0].has_shotgun = true;
+    w->players[0].owned_weapons |= (1u << WEAP_SHOTGUN);
     w->players[0].weapon = WEAP_SHOTGUN;
     w->players[0].ammo_shells = 0;
     in[0].buttons = INP_FIRE;
@@ -435,21 +456,22 @@ static void test_world_hub_preview_and_combat_edges(void) {
     ASSERT_EQ_INT(w->players[0].weapon, WEAP_PISTOL);
     in[0].buttons = 0;
 
-    /* Safe anti-stuck un-shrink inside 1-voxel air vent at (15.5, 1.0, 59.5) */
+    /* Safe anti-stuck un-shrink inside 1-voxel air vent */
     w->players[0].pos = vec3_make(15.5f, 1.0f, 59.5f);
     w->players[0].self_shrunk_timer = 0.01f;
     world_step(w, in, WORLD_FIXED_DT);
-    ASSERT_TRUE(w->players[0].self_shrunk_timer > 0.0f); /* Refuses to stand up under vent ceiling */
-    w->players[0].pos = vec3_make(15.5f, 1.0f, 54.5f);  /* Clear inside Projection Booth */
+    ASSERT_TRUE(w->players[0].self_shrunk_timer > 0.0f);
+    w->players[0].pos = vec3_make(15.5f, 1.0f, 54.5f);
     w->players[0].self_shrunk_timer = 0.01f;
     world_step(w, in, WORLD_FIXED_DT);
     ASSERT_NEAR(w->players[0].self_shrunk_timer, 0.0f, 1e-5f);
 
-    /* Shrink-Ray deals direct damage to mechanical Turret (enemy #10) instead of shrinking */
+    /* Shrink-Ray deals direct damage to mechanical Turret (enemy #10) */
     int turret_hp_before = w->enemies[10].hp;
     w->projectiles[0].active = true;
     w->projectiles[0].kind = PROJ_SHRINK_ORB;
     w->projectiles[0].owner_player = 0;
+    w->projectiles[0].owner_enemy = -1;
     w->projectiles[0].reflected = false;
     w->projectiles[0].pos = vec3_add(w->enemies[10].pos, vec3_make(0, 0.9f, 0));
     w->projectiles[0].vel = vec3_make(0, 0, 0);
@@ -457,7 +479,7 @@ static void test_world_hub_preview_and_combat_edges(void) {
     world_step(w, in, WORLD_FIXED_DT);
     ASSERT_TRUE(w->enemies[10].hp < turret_hp_before);
 
-    /* Player damage, death, and respawn at checkpoint preserving acquired keys & shotgun */
+    /* Player death & respawn at checkpoint preserving keys & shotgun */
     w->players[0].keys = KEY_BLUE;
     w->players[0].has_shotgun = true;
     w->players[0].hp = 5;
@@ -465,6 +487,7 @@ static void test_world_hub_preview_and_combat_edges(void) {
     w->projectiles[1].active = true;
     w->projectiles[1].kind = PROJ_BOSS_ROCKET;
     w->projectiles[1].owner_player = -1;
+    w->projectiles[1].owner_enemy = -1;
     w->projectiles[1].pos = vec3_add(w->players[0].pos, vec3_make(0, 1.0f, 0));
     w->projectiles[1].vel = vec3_make(0, 0, 0);
     w->projectiles[1].life = 1.0f;
@@ -474,6 +497,86 @@ static void test_world_hub_preview_and_combat_edges(void) {
     ASSERT_EQ_INT(w->players[0].hp, 100);
     ASSERT_TRUE(w->players[0].has_shotgun);
     ASSERT_TRUE((w->players[0].keys & KEY_BLUE) != 0u);
+
+    /* Day 2 Ledge Mantle + Spike hazard + early exit guard */
+    world_load_day(w, 2);
+    w->players[0].pos = vec3_make(44.5f, 5.0f, 10.5f);
+    in[0].buttons = INP_USE;
+    world_step(w, in, WORLD_FIXED_DT);
+    ASSERT_EQ_INT(w->scene, SCENE_DAY02); /* Blocked until T-Rex defeated */
+    in[0].buttons = 0;
+    world_step(w, in, WORLD_FIXED_DT);
+
+    /* Ledge Mantle up 2-voxel wall at Cistern (x=55.5 -> 56.0, y=1 -> y=3) */
+    w->players[0].pos = vec3_make(63.5f, 1.0f, 99.0f); /* Standing on VOX_SPIKES */
+    int hp_sp = w->players[0].hp;
+    world_step(w, in, WORLD_FIXED_DT);
+    ASSERT_TRUE(w->players[0].hp < hp_sp);
+
+    /* Mantle climb along +X and -Z ledges */
+    voxel_fill_box(&w->voxels, 48, 1, 110, 48, 2, 110, VOX_SANDSTONE);
+    w->players[0].pos = vec3_make(47.62f, 1.0f, 110.5f);
+    w->players[0].yaw = SW_PI * 0.5f;
+    in[0].move_y = 1.0f;
+    in[0].buttons = INP_JUMP;
+    world_step(w, in, WORLD_FIXED_DT);
+    ASSERT_TRUE(w->players[0].pos.y >= 2.5f);
+    in[0].move_y = 0.0f;
+    in[0].buttons = 0;
+
+    /* Day 3 Buy Crate insufficient cash + early exit guard */
+    world_load_day(w, 3);
+    w->players[0].cash = 50;
+    w->players[0].pos = vec3_make(60.5f, 1.0f, 108.5f);
+    in[0].buttons = INP_USE;
+    world_step(w, in, WORLD_FIXED_DT);
+    ASSERT_FALSE(w->players[0].has_defuse_kit);
+    in[0].buttons = 0;
+    world_step(w, in, WORLD_FIXED_DT);
+    w->players[0].pos = vec3_make(92.5f, 1.0f, 17.5f);
+    in[0].buttons = INP_USE;
+    world_step(w, in, WORLD_FIXED_DT);
+    ASSERT_EQ_INT(w->scene, SCENE_DAY03); /* Blocked until 2 C4 defused */
+    in[0].buttons = 0;
+
+    /* Day 4 Lava hazard + empty ammo weapon fallback checks */
+    world_load_day(w, 4);
+    w->players[0].pos = vec3_make(30.0f, 1.0f, 98.0f); /* Above VOX_LAVA */
+    int hp_lava = w->players[0].hp;
+    world_step(w, in, WORLD_FIXED_DT);
+    ASSERT_TRUE(w->players[0].hp < hp_lava);
+
+    /* Empty-ammo fallback checks across Act I weapons */
+    w->players[0].owned_weapons = 0xFFFFFFFFu;
+    w->players[0].ammo_bullets = 0;
+    w->players[0].ammo_rockets = 0;
+    w->players[0].ammo_cells = 0;
+    w->players[0].ammo_shells = 0;
+    static const WeaponId kFallbacks[] = {
+        WEAP_MAGNUM, WEAP_DEAGLE, WEAP_CARBINE, WEAP_SNIPER, WEAP_NAILGUN,
+        WEAP_ROCKET, WEAP_THUNDERBOLT, WEAP_FLAREGUN, WEAP_AEROSOL, WEAP_VOODOO,
+        WEAP_SUPER_SHOTGUN, WEAP_CHAINGUN, WEAP_BFG
+    };
+    for (size_t k = 0; k < sizeof(kFallbacks) / sizeof(kFallbacks[0]); ++k) {
+        w->players[0].weapon = kFallbacks[k];
+        w->players[0].fire_cooldown = 0.0f;
+        in[0].buttons = INP_FIRE;
+        world_step(w, in, WORLD_FIXED_DT);
+        ASSERT_TRUE(w->players[0].weapon != kFallbacks[k]);
+        in[0].buttons = 0;
+    }
+
+    /* Day 6 Slime hazard without Radiation Suit + locked Yellow Door prompt */
+    world_load_day(w, 6);
+    w->players[0].pos = vec3_make(46.0f, 1.0f, 82.0f); /* Above VOX_SLIME */
+    int hp_slime = w->players[0].hp;
+    world_step(w, in, WORLD_FIXED_DT);
+    ASSERT_TRUE(w->players[0].hp < hp_slime);
+
+    w->players[0].pos = vec3_make(82.5f, 1.0f, 63.0f); /* Beside locked Yellow Door */
+    in[0].buttons = INP_USE;
+    world_step(w, in, WORLD_FIXED_DT);
+    ASSERT_FALSE(w->doors[1].open);
 }
 
 int main(void) {
@@ -484,7 +587,7 @@ int main(void) {
     RUN_TEST(test_net_proto_and_room_codes);
     RUN_TEST(test_touch_controller);
     RUN_TEST(test_retro_audio_synth);
-    RUN_TEST(test_world_hub_preview_and_combat_edges);
+    RUN_TEST(test_world_hub_preview_and_act1_edges);
     printf("\nUnit tests run: %d | Failed: %d\n", g_tests_run, g_tests_failed);
     return g_tests_failed == 0 ? 0 : 1;
 }

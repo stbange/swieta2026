@@ -525,22 +525,27 @@ SDL_AppResult SDL_AppEvent(void *appstate, SDL_Event *ev) {
                     SDL_SetWindowRelativeMouseMode(app->window, false);
                     app->mouse_captured = false;
                 }
-            } else if (ev->key.scancode == SDL_SCANCODE_1) {
-                app->pending_weapon = WEAP_PISTOL;
-            } else if (ev->key.scancode == SDL_SCANCODE_2) {
-                if (app->world.players[0].has_shotgun) app->pending_weapon = WEAP_SHOTGUN;
-            } else if (ev->key.scancode == SDL_SCANCODE_3) {
-                app->pending_weapon = WEAP_SHRINKER;
-            } else if (ev->key.scancode == SDL_SCANCODE_4) {
-                app->pending_weapon = WEAP_PIPEBOMB;
-            } else if (ev->key.scancode == SDL_SCANCODE_5) {
-                app->pending_weapon = WEAP_TRIPMINE;
-            } else if (ev->key.scancode == SDL_SCANCODE_TAB) {
-                int next = (app->world.players[0].weapon + 1) % WEAP_COUNT;
-                if (next == WEAP_SHOTGUN && !app->world.players[0].has_shotgun) {
-                    next = WEAP_SHRINKER;
+            } else if (ev->key.scancode >= SDL_SCANCODE_1 && ev->key.scancode <= SDL_SCANCODE_5) {
+                int slot = (int)(ev->key.scancode - SDL_SCANCODE_1);
+                if (slot < app->world.level_weapon_count) {
+                    WeaponId w_id = world_slot_weapon(&app->world, slot);
+                    if ((app->world.players[0].owned_weapons & (1u << (unsigned)w_id)) != 0u) {
+                        app->pending_weapon = (int)w_id;
+                    }
                 }
-                app->pending_weapon = next;
+            } else if (ev->key.scancode == SDL_SCANCODE_TAB) {
+                int cur_slot = 0;
+                int cnt = app->world.level_weapon_count > 0 ? app->world.level_weapon_count : 1;
+                for (int s = 0; s < cnt; ++s) {
+                    if (app->world.level_weapons[s] == app->world.players[0].weapon) { cur_slot = s; break; }
+                }
+                for (int step = 1; step <= cnt; ++step) {
+                    WeaponId cand = app->world.level_weapons[(cur_slot + step) % cnt];
+                    if ((app->world.players[0].owned_weapons & (1u << (unsigned)cand)) != 0u) {
+                        app->pending_weapon = (int)cand;
+                        break;
+                    }
+                }
             } else if (ev->key.scancode == SDL_SCANCODE_H) {
                 world_load_hub(&app->world);
             } else if (ev->key.scancode == SDL_SCANCODE_M) {

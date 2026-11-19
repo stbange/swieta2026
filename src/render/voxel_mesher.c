@@ -99,11 +99,13 @@ void voxel_fill_box(VoxelWorld *vw, int x0, int y0, int z0, int x1, int y1, int 
 
 bool voxel_is_solid(const VoxelWorld *vw, int x, int y, int z) {
     uint8_t t = voxel_get(vw, x, y, z);
-    return t != VOX_AIR && t != VOX_FIRE;
+    return t != VOX_AIR && t != VOX_FIRE && t != VOX_WATER &&
+           t != VOX_LAVA && t != VOX_SLIME && t != VOX_SPIKES;
 }
 
 bool voxel_is_opaque(uint8_t type) {
-    return type != VOX_AIR && type != VOX_FIRE && type != VOX_GLASS;
+    return type != VOX_AIR && type != VOX_FIRE && type != VOX_GLASS &&
+           type != VOX_WATER && type != VOX_SPIKES;
 }
 
 static int clear_matching_radius(VoxelWorld *vw, Vec3 center, float radius, uint8_t target_type) {
@@ -361,8 +363,8 @@ static bool append_region_to_mesh(const VoxelWorld *vw, int x0, int y0, int z0, 
                 for (int fi = 0; fi < 6; ++fi) {
                     const FaceDef *f = &kFaces[fi];
                     uint8_t neighbor = voxel_get(vw, x + f->dx, y + f->dy, z + f->dz);
-                    if (type == VOX_GLASS) {
-                        if (neighbor == VOX_GLASS || voxel_is_opaque(neighbor)) continue;
+                    if (type == VOX_GLASS || type == VOX_WATER) {
+                        if (neighbor == type || voxel_is_opaque(neighbor)) continue;
                     } else if (voxel_is_opaque(neighbor)) {
                         continue;
                     }
@@ -381,7 +383,7 @@ static bool append_region_to_mesh(const VoxelWorld *vw, int x0, int y0, int z0, 
                         v.normal[2] = (float)f->dz;
                         v.uv[0] = (f->uv[ci][0] > 0.5f) ? u1 : u0;
                         v.uv[1] = (f->uv[ci][1] > 0.5f) ? v1 : v0;
-                        float ao = (emissive > 0.5f || type == VOX_GLASS) ? 1.0f : compute_vertex_ao(vw, x, y, z, f, f->corners[ci]);
+                        float ao = (emissive > 0.5f || type == VOX_GLASS || type == VOX_WATER) ? 1.0f : compute_vertex_ao(vw, x, y, z, f, f->corners[ci]);
                         v.color[0] = sw_clampf(rgba[0] * var * ao, 0.0f, 1.0f);
                         v.color[1] = sw_clampf(rgba[1] * var * ao, 0.0f, 1.0f);
                         v.color[2] = sw_clampf(rgba[2] * var * ao, 0.0f, 1.0f);

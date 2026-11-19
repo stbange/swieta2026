@@ -23,6 +23,7 @@ add_library(swieta_core STATIC
     src/platform/touch.c
     src/audio/retro_audio.c
     src/sim/world.c
+    src/sim/levels_act1.c
 )
 target_include_directories(swieta_core PUBLIC src)
 if(NOT MSVC)

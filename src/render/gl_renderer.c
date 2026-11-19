@@ -395,6 +395,97 @@ static void create_voxel_texture_atlas(GlRenderer *r) {
                         cr = pulse ? 255 : 130; cg = pulse ? 55 : 22; cb = pulse ? 95 : 45;
                         break;
                     }
+                    case VOX_SANDSTONE: {
+                        bool seam = (y % 8 == 0) || ((x + (y / 8) * 10) % 16 == 0);
+                        bool glyph = (y >= 11 && y <= 20 && (x == 10 || x == 21 || y == 15));
+                        if (seam) { cr = 132; cg = 104; cb = 68; }
+                        else if (glyph) { cr = 165; cg = 132; cb = 78; }
+                        else { cr = 212 + h / 2; cg = 178 + h / 2; cb = 122 + h / 3; }
+                        break;
+                    }
+                    case VOX_WATER: {
+                        bool wave = (((x + y * 2) % 9) < 2);
+                        cr = wave ? 120 : 38; cg = wave ? 235 : 165 + h; cb = wave ? 255 : 225;
+                        break;
+                    }
+                    case VOX_LAVA: {
+                        bool vein = (((x * 3 + y * 5) ^ (x * y)) & 15) < 4;
+                        cr = 255; cg = vein ? 210 : 85 + h; cb = vein ? 65 : 14;
+                        break;
+                    }
+                    case VOX_SLIME: {
+                        bool bub = ((x - 10) * (x - 10) + (y - 12) * (y - 12) < 12) ||
+                                   ((x - 22) * (x - 22) + (y - 24) * (y - 24) < 9);
+                        cr = bub ? 165 : 42; cg = bub ? 255 : 195 + h; cb = bub ? 90 : 36;
+                        break;
+                    }
+                    case VOX_RUST_BRASS: {
+                        bool rivet = ((x == 3 || x == 28) && (y == 3 || y == 28));
+                        bool seam = (x == 0 || y == 0 || x == 16 || y == 16);
+                        int rust = ((x * 13 ^ y * 29) & 7) == 0 ? -24 : 0;
+                        if (seam) { cr = 64; cg = 44; cb = 28; }
+                        else if (rivet) { cr = 215; cg = 175; cb = 108; }
+                        else { cr = 138 + rust + h / 2; cg = 96 + rust / 2 + h / 3; cb = 54 + h / 4; }
+                        break;
+                    }
+                    case VOX_CRATE: {
+                        bool frame = (x < 4 || x > 27 || y < 4 || y > 27);
+                        bool brace = (abs(x - y) <= 2);
+                        int p = (frame || brace) ? 18 : 0;
+                        cr = 158 + p + h / 2; cg = 114 + p + h / 3; cb = 64 + p / 2;
+                        break;
+                    }
+                    case VOX_DOOR_YELLOW: {
+                        bool frame = (x < 3 || x > 28 || y < 3 || y > 28);
+                        bool lock = (x >= 11 && x <= 20 && y >= 11 && y <= 20);
+                        int b = frame ? 68 : (lock ? 255 : 185);
+                        cr = b; cg = (b * 9) / 10; cb = b / 5;
+                        break;
+                    }
+                    case VOX_RED_CARNIVAL: {
+                        bool red = ((x / 8) & 1) == 0;
+                        cr = red ? 198 + h / 2 : 228 + h / 3;
+                        cg = red ? 32 : 212 + h / 3;
+                        cb = red ? 38 : 184;
+                        break;
+                    }
+                    case VOX_CRYPT_STONE: {
+                        bool seam = (y % 8 == 0) || ((x + (y / 8) * 6) % 16 == 0);
+                        bool moss = (y > 22 && ((x * 7 + y) % 5 == 0));
+                        if (seam) { cr = 34; cg = 36; cb = 44; }
+                        else if (moss) { cr = 52; cg = 96; cb = 58; }
+                        else { cr = 74 + h / 2; cg = 72 + h / 2; cb = 86 + h / 2; }
+                        break;
+                    }
+                    case VOX_TECH_WALL: {
+                        bool rib = (x % 8 == 0) || (y == 0 || y == 31 || y == 15);
+                        bool led = (y >= 12 && y <= 14 && (x == 4 || x == 20));
+                        if (led) { cr = 50; cg = 235; cb = 95; }
+                        else if (rib) { cr = 64; cg = 70; cb = 78; }
+                        else { cr = 112 + h / 2; cg = 118 + h / 2; cb = 128 + h / 2; }
+                        break;
+                    }
+                    case VOX_PUSH_BLOCK: {
+                        bool rim = (x < 4 || x > 27 || y < 4 || y > 27);
+                        bool sun = ((x - 16) * (x - 16) + (y - 16) * (y - 16) < 42);
+                        if (sun) { cr = 248; cg = 205; cb = 65; }
+                        else if (rim) { cr = 148; cg = 112; cb = 52; }
+                        else { cr = 192 + h / 2; cg = 152 + h / 2; cb = 86; }
+                        break;
+                    }
+                    case VOX_SPIKES: {
+                        bool tip = (x % 8 >= 3 && x % 8 <= 5 && y < 20);
+                        cr = tip ? (y < 6 ? 220 : 180) : 45;
+                        cg = tip ? (y < 6 ? 35 : 185) : 48;
+                        cb = tip ? (y < 6 ? 35 : 195) : 54;
+                        break;
+                    }
+                    case VOX_SLIPGATE: {
+                        int dx = x - 16, dy = y - 16;
+                        int ring = ((dx * dx + dy * dy) / 14) & 1;
+                        cr = ring ? 185 : 112; cg = ring ? 82 : 42; cb = ring ? 255 : 215;
+                        break;
+                    }
                     default: break;
                 }
                 int idx = ((ty + y) * W + (tx + x)) * 4;
@@ -863,37 +954,156 @@ static void draw_weapon_viewmodel(GlRenderer *r, const Player *p) {
     }
 
     Vec3 base = vec3_make(0.24f + bob_x, -0.24f - bob_y - kick * 0.25f, -0.50f + kick * 0.45f);
-    if (p->weapon == WEAP_PISTOL) {
-        draw_colored_box(r, r->prog_world, mat4_mul(mat4_translate(base), mat4_scale(vec3_make(0.08f, 0.09f, 0.32f))),
-                         0.62f, 0.65f, 0.72f, 1.0f, flash);
-        draw_colored_box(r, r->prog_world, mat4_mul(mat4_translate(vec3_add(base, vec3_make(0, -0.08f, 0.08f))),
-                         mat4_scale(vec3_make(0.07f, 0.12f, 0.09f))), 0.22f, 0.22f, 0.25f, 1.0f, 0.05f);
-    } else if (p->weapon == WEAP_SHOTGUN) {
-        /* Twin-barrel shotgun + wood stock */
-        draw_colored_box(r, r->prog_world, mat4_mul(mat4_translate(vec3_add(base, vec3_make(-0.03f, 0.02f, -0.08f))),
-                         mat4_scale(vec3_make(0.045f, 0.05f, 0.46f))), 0.55f, 0.58f, 0.64f, 1.0f, flash);
-        draw_colored_box(r, r->prog_world, mat4_mul(mat4_translate(vec3_add(base, vec3_make(0.03f, 0.02f, -0.08f))),
-                         mat4_scale(vec3_make(0.045f, 0.05f, 0.46f))), 0.55f, 0.58f, 0.64f, 1.0f, flash);
-        draw_colored_box(r, r->prog_world, mat4_mul(mat4_translate(vec3_add(base, vec3_make(0, -0.05f, 0.12f))),
-                         mat4_scale(vec3_make(0.10f, 0.09f, 0.22f))), 0.52f, 0.28f, 0.14f, 1.0f, 0.05f);
-    } else if (p->weapon == WEAP_SHRINKER) {
-        /* Glowing emerald Shrink-Ray with alien crystal */
-        draw_colored_box(r, r->prog_world, mat4_mul(mat4_translate(base), mat4_scale(vec3_make(0.14f, 0.12f, 0.40f))),
-                         0.38f, 0.32f, 0.48f, 1.0f, 0.15f);
-        draw_colored_box(r, r->prog_world, mat4_mul(mat4_translate(vec3_add(base, vec3_make(0, 0.06f, -0.10f))),
-                         mat4_scale(vec3_make(0.09f, 0.09f, 0.14f))), 0.25f, 1.0f, 0.45f, 1.0f, 0.95f);
-    } else if (p->weapon == WEAP_PIPEBOMB) {
-        /* Red Pipebomb + Remote Clacker */
-        draw_colored_box(r, r->prog_world, mat4_mul(mat4_translate(base), mat4_scale(vec3_make(0.11f, 0.11f, 0.24f))),
-                         0.88f, 0.22f, 0.18f, 1.0f, 0.35f);
-        draw_colored_box(r, r->prog_world, mat4_mul(mat4_translate(vec3_make(-0.22f + bob_x, -0.28f - bob_y, -0.46f)),
-                         mat4_scale(vec3_make(0.09f, 0.14f, 0.08f))), 0.35f, 0.38f, 0.42f, 1.0f, 0.2f);
-    } else {
-        /* Laser Tripmine emitter */
-        draw_colored_box(r, r->prog_world, mat4_mul(mat4_translate(base), mat4_scale(vec3_make(0.14f, 0.09f, 0.18f))),
-                         0.25f, 0.28f, 0.34f, 1.0f, 0.15f);
-        draw_colored_box(r, r->prog_world, mat4_mul(mat4_translate(vec3_add(base, vec3_make(0, 0.03f, -0.09f))),
-                         mat4_scale(vec3_make(0.05f, 0.05f, 0.05f))), 1.0f, 0.15f, 0.18f, 1.0f, 1.0f);
+    switch (p->weapon) {
+        case WEAP_PISTOL:
+        case WEAP_USP:
+        case WEAP_DEAGLE:
+        case WEAP_MAGNUM: {
+            float barrel_len = (p->weapon == WEAP_USP) ? 0.42f : 0.34f;
+            float cr = (p->weapon == WEAP_MAGNUM || p->weapon == WEAP_DEAGLE) ? 0.80f : 0.62f;
+            draw_colored_box(r, r->prog_world, mat4_mul(mat4_translate(base), mat4_scale(vec3_make(0.08f, 0.09f, barrel_len))),
+                             cr, cr + 0.03f, cr + 0.08f, 1.0f, flash);
+            draw_colored_box(r, r->prog_world, mat4_mul(mat4_translate(vec3_add(base, vec3_make(0, -0.08f, 0.08f))),
+                             mat4_scale(vec3_make(0.07f, 0.12f, 0.09f))), 0.22f, 0.22f, 0.25f, 1.0f, 0.08f);
+            break;
+        }
+        case WEAP_DUAL_PISTOLS: {
+            /* Iconic Lara twin chrome pistols! */
+            Vec3 left = vec3_make(-0.24f - bob_x, base.y, base.z);
+            draw_colored_box(r, r->prog_world, mat4_mul(mat4_translate(base), mat4_scale(vec3_make(0.07f, 0.08f, 0.32f))),
+                             0.76f, 0.78f, 0.84f, 1.0f, flash);
+            draw_colored_box(r, r->prog_world, mat4_mul(mat4_translate(left), mat4_scale(vec3_make(0.07f, 0.08f, 0.32f))),
+                             0.76f, 0.78f, 0.84f, 1.0f, flash);
+            break;
+        }
+        case WEAP_FLARE: {
+            /* Glowing green magnesium flare stick */
+            draw_colored_box(r, r->prog_world, mat4_mul(mat4_translate(base), mat4_scale(vec3_make(0.05f, 0.05f, 0.28f))),
+                             0.25f, 0.72f, 0.35f, 1.0f, 0.4f);
+            draw_colored_box(r, r->prog_world, mat4_mul(mat4_translate(vec3_add(base, vec3_make(0, 0.01f, -0.15f))),
+                             mat4_scale(vec3_make(0.08f, 0.08f, 0.08f))), 0.35f, 1.0f, 0.45f, 1.0f, 1.2f);
+            break;
+        }
+        case WEAP_SHOTGUN:
+        case WEAP_SUPER_SHOTGUN: {
+            float sc = (p->weapon == WEAP_SUPER_SHOTGUN) ? 1.25f : 1.0f;
+            draw_colored_box(r, r->prog_world, mat4_mul(mat4_translate(vec3_add(base, vec3_make(-0.03f * sc, 0.02f, -0.08f))),
+                             mat4_scale(vec3_make(0.048f * sc, 0.052f, 0.48f))), 0.55f, 0.58f, 0.64f, 1.0f, flash);
+            draw_colored_box(r, r->prog_world, mat4_mul(mat4_translate(vec3_add(base, vec3_make(0.03f * sc, 0.02f, -0.08f))),
+                             mat4_scale(vec3_make(0.048f * sc, 0.052f, 0.48f))), 0.55f, 0.58f, 0.64f, 1.0f, flash);
+            draw_colored_box(r, r->prog_world, mat4_mul(mat4_translate(vec3_add(base, vec3_make(0, -0.05f, 0.12f))),
+                             mat4_scale(vec3_make(0.11f, 0.09f, 0.22f))), 0.52f, 0.28f, 0.14f, 1.0f, 0.1f);
+            break;
+        }
+        case WEAP_CARBINE:
+        case WEAP_SNIPER: {
+            float len = (p->weapon == WEAP_SNIPER) ? 0.62f : 0.46f;
+            draw_colored_box(r, r->prog_world, mat4_mul(mat4_translate(base), mat4_scale(vec3_make(0.08f, 0.10f, len))),
+                             0.26f, 0.30f, 0.28f, 1.0f, flash * 0.7f);
+            draw_colored_box(r, r->prog_world, mat4_mul(mat4_translate(vec3_add(base, vec3_make(0, 0.08f, -0.04f))),
+                             mat4_scale(vec3_make(0.05f, 0.05f, 0.22f))), 0.16f, 0.18f, 0.22f, 1.0f, 0.15f);
+            break;
+        }
+        case WEAP_FLASH_SMOKE: {
+            draw_colored_box(r, r->prog_world, mat4_mul(mat4_translate(base), mat4_scale(vec3_make(0.09f, 0.15f, 0.09f))),
+                             0.65f, 0.72f, 0.68f, 1.0f, 0.25f);
+            draw_colored_box(r, r->prog_world, mat4_mul(mat4_translate(vec3_add(base, vec3_make(0, 0.08f, 0))),
+                             mat4_scale(vec3_make(0.05f, 0.04f, 0.05f))), 0.25f, 0.85f, 1.0f, 1.0f, 0.8f);
+            break;
+        }
+        case WEAP_SHRINKER:
+        case WEAP_BFG: {
+            float sc = (p->weapon == WEAP_BFG) ? 1.45f : 1.0f;
+            draw_colored_box(r, r->prog_world, mat4_mul(mat4_translate(base), mat4_scale(vec3_make(0.14f * sc, 0.12f * sc, 0.42f))),
+                             0.38f, 0.36f, 0.48f, 1.0f, 0.18f);
+            draw_colored_box(r, r->prog_world, mat4_mul(mat4_translate(vec3_add(base, vec3_make(0, 0.06f, -0.12f))),
+                             mat4_scale(vec3_make(0.10f * sc, 0.10f * sc, 0.16f))), 0.25f, 1.0f, 0.45f, 1.0f, 1.1f);
+            break;
+        }
+        case WEAP_NAILGUN:
+        case WEAP_CHAINGUN: {
+            float cr = (p->weapon == WEAP_NAILGUN) ? 0.72f : 0.42f;
+            float cg = (p->weapon == WEAP_NAILGUN) ? 0.56f : 0.44f;
+            float cb = (p->weapon == WEAP_NAILGUN) ? 0.34f : 0.48f;
+            draw_colored_box(r, r->prog_world, mat4_mul(mat4_translate(vec3_add(base, vec3_make(-0.04f, 0, -0.06f))),
+                             mat4_scale(vec3_make(0.05f, 0.05f, 0.46f))), cr, cg, cb, 1.0f, flash);
+            draw_colored_box(r, r->prog_world, mat4_mul(mat4_translate(vec3_add(base, vec3_make(0.04f, 0, -0.06f))),
+                             mat4_scale(vec3_make(0.05f, 0.05f, 0.46f))), cr, cg, cb, 1.0f, flash);
+            break;
+        }
+        case WEAP_ROCKET: {
+            draw_colored_box(r, r->prog_world, mat4_mul(mat4_translate(base), mat4_scale(vec3_make(0.15f, 0.15f, 0.52f))),
+                             0.36f, 0.34f, 0.32f, 1.0f, 0.18f);
+            draw_colored_box(r, r->prog_world, mat4_mul(mat4_translate(vec3_add(base, vec3_make(0, 0, -0.25f))),
+                             mat4_scale(vec3_make(0.11f, 0.11f, 0.06f))), 0.95f, 0.42f, 0.15f, 1.0f, flash);
+            break;
+        }
+        case WEAP_THUNDERBOLT: {
+            draw_colored_box(r, r->prog_world, mat4_mul(mat4_translate(base), mat4_scale(vec3_make(0.12f, 0.10f, 0.44f))),
+                             0.64f, 0.48f, 0.30f, 1.0f, 0.2f);
+            draw_colored_box(r, r->prog_world, mat4_mul(mat4_translate(vec3_add(base, vec3_make(0, 0.04f, -0.18f))),
+                             mat4_scale(vec3_make(0.08f, 0.08f, 0.12f))), 0.35f, 0.92f, 1.0f, 1.0f, 1.2f);
+            break;
+        }
+        case WEAP_PITCHFORK: {
+            /* 4-prong crimson-tipped Blood pitchfork! */
+            draw_colored_box(r, r->prog_world, mat4_mul(mat4_translate(vec3_add(base, vec3_make(0, -0.04f, 0.08f))),
+                             mat4_scale(vec3_make(0.05f, 0.05f, 0.40f))), 0.48f, 0.28f, 0.16f, 1.0f, 0.12f);
+            for (int k = -1; k <= 1; ++k) {
+                draw_colored_box(r, r->prog_world, mat4_mul(mat4_translate(vec3_add(base, vec3_make((float)k * 0.055f, 0.02f, -0.16f))),
+                                 mat4_scale(vec3_make(0.018f, 0.025f, 0.22f))), 0.85f, 0.22f, 0.22f, 1.0f, 0.35f);
+            }
+            break;
+        }
+        case WEAP_FLAREGUN: {
+            draw_colored_box(r, r->prog_world, mat4_mul(mat4_translate(base), mat4_scale(vec3_make(0.09f, 0.10f, 0.30f))),
+                             0.85f, 0.58f, 0.22f, 1.0f, flash);
+            draw_colored_box(r, r->prog_world, mat4_mul(mat4_translate(vec3_add(base, vec3_make(0, 0.02f, -0.15f))),
+                             mat4_scale(vec3_make(0.06f, 0.06f, 0.06f))), 1.0f, 0.45f, 0.12f, 1.0f, 1.0f);
+            break;
+        }
+        case WEAP_AEROSOL: {
+            /* Red Aerosol can + Zippo flame tip */
+            draw_colored_box(r, r->prog_world, mat4_mul(mat4_translate(base), mat4_scale(vec3_make(0.10f, 0.18f, 0.10f))),
+                             0.88f, 0.18f, 0.16f, 1.0f, 0.22f);
+            draw_colored_box(r, r->prog_world, mat4_mul(mat4_translate(vec3_add(base, vec3_make(-0.08f, 0.06f, -0.10f))),
+                             mat4_scale(vec3_make(0.05f, 0.09f, 0.05f))), 1.0f, 0.72f, 0.18f, 1.0f, 1.15f);
+            break;
+        }
+        case WEAP_PIPEBOMB:
+        case WEAP_TNT: {
+            draw_colored_box(r, r->prog_world, mat4_mul(mat4_translate(base), mat4_scale(vec3_make(0.11f, 0.11f, 0.24f))),
+                             0.88f, 0.22f, 0.18f, 1.0f, 0.35f);
+            draw_colored_box(r, r->prog_world, mat4_mul(mat4_translate(vec3_make(-0.22f + bob_x, -0.28f - bob_y, -0.46f)),
+                             mat4_scale(vec3_make(0.09f, 0.14f, 0.08f))), 0.35f, 0.38f, 0.42f, 1.0f, 0.2f);
+            break;
+        }
+        case WEAP_VOODOO: {
+            /* Stitched burlap Voodoo Doll + glowing cursed pin */
+            draw_colored_box(r, r->prog_world, mat4_mul(mat4_translate(base), mat4_scale(vec3_make(0.12f, 0.18f, 0.08f))),
+                             0.70f, 0.58f, 0.42f, 1.0f, 0.2f);
+            draw_colored_box(r, r->prog_world, mat4_mul(mat4_translate(vec3_add(base, vec3_make(0, 0.12f, 0))),
+                             mat4_scale(vec3_make(0.09f, 0.09f, 0.09f))), 0.72f, 0.60f, 0.45f, 1.0f, 0.2f);
+            draw_colored_box(r, r->prog_world, mat4_mul(mat4_translate(vec3_add(base, vec3_make(-0.08f, 0.02f, -0.05f))),
+                             mat4_scale(vec3_make(0.14f, 0.02f, 0.02f))), 0.85f, 0.25f, 1.0f, 1.0f, 1.0f);
+            break;
+        }
+        case WEAP_CHAINSAW: {
+            float vib = sinf(p->walk_bob * 4.0f) * 0.008f;
+            draw_colored_box(r, r->prog_world, mat4_mul(mat4_translate(vec3_add(base, vec3_make(vib, 0, 0.04f))),
+                             mat4_scale(vec3_make(0.14f, 0.12f, 0.18f))), 0.92f, 0.74f, 0.14f, 1.0f, 0.25f);
+            draw_colored_box(r, r->prog_world, mat4_mul(mat4_translate(vec3_add(base, vec3_make(vib, 0.02f, -0.22f))),
+                             mat4_scale(vec3_make(0.05f, 0.09f, 0.36f))), 0.72f, 0.75f, 0.80f, 1.0f, 0.30f);
+            break;
+        }
+        default: {
+            /* Laser Tripmine emitter */
+            draw_colored_box(r, r->prog_world, mat4_mul(mat4_translate(base), mat4_scale(vec3_make(0.14f, 0.09f, 0.18f))),
+                             0.25f, 0.28f, 0.34f, 1.0f, 0.15f);
+            draw_colored_box(r, r->prog_world, mat4_mul(mat4_translate(vec3_add(base, vec3_make(0, 0.03f, -0.09f))),
+                             mat4_scale(vec3_make(0.05f, 0.05f, 0.05f))), 1.0f, 0.15f, 0.18f, 1.0f, 1.0f);
+            break;
+        }
     }
 }
 
@@ -903,8 +1113,34 @@ static void render_scene_view(GlRenderer *r, const GameWorld *w, Mat4 proj, Mat4
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
+    /* Distinct atmospheric sky & lighting mood per Act I realm! */
+    float sr = 0.68f, sg = 0.58f, sb = 0.46f;
+    float ar = 0.30f, ag = 0.25f, ab = 0.22f;
+    float fr = 0.11f, fg = 0.07f, fb = 0.06f, fd = 0.012f;
     if (w->scene == SCENE_DAY01) {
         glClearColor(0.05f, 0.06f, 0.14f, 1.0f);
+        sr = 0.56f; sg = 0.62f; sb = 0.86f; ar = 0.26f; ag = 0.26f; ab = 0.34f;
+        fr = 0.06f; fg = 0.07f; fb = 0.16f; fd = 0.015f;
+    } else if (w->scene == SCENE_DAY02) {
+        glClearColor(0.24f, 0.42f, 0.58f, 1.0f); /* Sunlit Peruvian sky */
+        sr = 0.88f; sg = 0.78f; sb = 0.58f; ar = 0.28f; ag = 0.24f; ab = 0.20f;
+        fr = 0.18f; fg = 0.15f; fb = 0.12f; fd = 0.014f;
+    } else if (w->scene == SCENE_DAY03) {
+        glClearColor(0.46f, 0.68f, 0.90f, 1.0f); /* Bright sunlit de_yule_dust noon! */
+        sr = 0.96f; sg = 0.92f; sb = 0.78f; ar = 0.42f; ag = 0.38f; ab = 0.32f;
+        fr = 0.52f; fg = 0.62f; fb = 0.74f; fd = 0.008f;
+    } else if (w->scene == SCENE_DAY04) {
+        glClearColor(0.10f, 0.07f, 0.06f, 1.0f); /* Gothic Quake rust gloom */
+        sr = 0.62f; sg = 0.48f; sb = 0.36f; ar = 0.24f; ag = 0.20f; ab = 0.18f;
+        fr = 0.10f; fg = 0.07f; fb = 0.06f; fd = 0.016f;
+    } else if (w->scene == SCENE_DAY05) {
+        glClearColor(0.08f, 0.04f, 0.10f, 1.0f); /* Foggy Blood midnight crimson */
+        sr = 0.55f; sg = 0.32f; sb = 0.40f; ar = 0.22f; ag = 0.16f; ab = 0.22f;
+        fr = 0.10f; fg = 0.05f; fb = 0.11f; fd = 0.019f;
+    } else if (w->scene == SCENE_DAY06) {
+        glClearColor(0.14f, 0.04f, 0.04f, 1.0f); /* Doom Brimstone sky */
+        sr = 0.72f; sg = 0.56f; sb = 0.52f; ar = 0.28f; ag = 0.24f; ab = 0.24f;
+        fr = 0.12f; fg = 0.05f; fb = 0.05f; fd = 0.014f;
     } else if (w->scene == SCENE_PREVIEW) {
         glClearColor(0.05f, 0.08f, 0.12f, 1.0f);
     } else {
@@ -918,18 +1154,10 @@ static void render_scene_view(GlRenderer *r, const GameWorld *w, Mat4 proj, Mat4
     glUniformMatrix4fv(glGetUniformLocation(r->prog_world, "uLightVP"), 1, GL_FALSE, light_vp.m);
     glUniform3f(glGetUniformLocation(r->prog_world, "uCamPos"), cam_pos.x, cam_pos.y, cam_pos.z);
     glUniform3f(glGetUniformLocation(r->prog_world, "uSunDir"), sun_dir.x, sun_dir.y, sun_dir.z);
-
-    if (w->scene == SCENE_DAY01) {
-        glUniform3f(glGetUniformLocation(r->prog_world, "uSunColor"), 0.56f, 0.62f, 0.86f);
-        glUniform3f(glGetUniformLocation(r->prog_world, "uAmbient"),  0.26f, 0.26f, 0.34f);
-        glUniform3f(glGetUniformLocation(r->prog_world, "uFogColor"), 0.06f, 0.07f, 0.16f);
-        glUniform1f(glGetUniformLocation(r->prog_world, "uFogDensity"), 0.015f);
-    } else {
-        glUniform3f(glGetUniformLocation(r->prog_world, "uSunColor"), 0.68f, 0.58f, 0.46f);
-        glUniform3f(glGetUniformLocation(r->prog_world, "uAmbient"),  0.30f, 0.25f, 0.22f);
-        glUniform3f(glGetUniformLocation(r->prog_world, "uFogColor"), 0.11f, 0.07f, 0.06f);
-        glUniform1f(glGetUniformLocation(r->prog_world, "uFogDensity"), 0.012f);
-    }
+    glUniform3f(glGetUniformLocation(r->prog_world, "uSunColor"), sr, sg, sb);
+    glUniform3f(glGetUniformLocation(r->prog_world, "uAmbient"),  ar, ag, ab);
+    glUniform3f(glGetUniformLocation(r->prog_world, "uFogColor"), fr, fg, fb);
+    glUniform1f(glGetUniformLocation(r->prog_world, "uFogDensity"), fd);
 
     int lcount = w->light_count > 12 ? 12 : w->light_count;
     float lpos[12 * 4] = {0};
@@ -948,7 +1176,7 @@ static void render_scene_view(GlRenderer *r, const GameWorld *w, Mat4 proj, Mat4
     glUniform4fv(glGetUniformLocation(r->prog_world, "uLightPosRad"), 12, lpos);
     glUniform4fv(glGetUniformLocation(r->prog_world, "uLightColInt"), 12, lcol);
 
-    /* 1. Draw Chunked Textured Voxel World (uUseTex = 2 -> voxel_atlas_tex!) */
+    /* 1. Draw Chunked Textured Voxel World */
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, r->voxel_atlas_tex);
     glUniform1i(glGetUniformLocation(r->prog_world, "uTex"), 0);
@@ -961,11 +1189,10 @@ static void render_scene_view(GlRenderer *r, const GameWorld *w, Mat4 proj, Mat4
     glUniform1i(glGetUniformLocation(r->prog_world, "uUseTex"), 2);
     draw_all_chunks(r);
 
-    /* Switch unit 0 to white_tex for untextured colored 3D meshes */
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, r->white_tex);
 
-    /* 2. Portals, Spinning Tree Star, Laser Tripmines, Co-op Players */
+    /* 2. Portals, Spinning Tree Star, Barrels, Boulders, Flares/Smoke, Tripmines */
     if (w->scene == SCENE_HUB) {
         Mat4 star_m = mat4_mul(mat4_translate(vec3_make(64.5f, 16.0f, 64.5f)),
                       mat4_mul(mat4_rotate_y(w->time_sec * 1.4f), mat4_scale(vec3_make(1.2f, 1.2f, 1.2f))));
@@ -988,6 +1215,51 @@ static void render_scene_view(GlRenderer *r, const GameWorld *w, Mat4 proj, Mat4
     } else {
         Vec3 rp = vec3_add(w->return_portal_pos, vec3_make(0, 1.4f, 0));
         draw_billboard_sprite(r, rp, 1.9f, 2.8f, 7, cam_yaw, 0.3f, 0.9f, 1.0f, 0.95f);
+    }
+
+    /* Explosive Red Nukage / Powder Barrels */
+    for (int i = 0; i < w->barrel_count; ++i) {
+        if (!w->barrels[i].active) continue;
+        Vec3 bp = w->barrels[i].pos;
+        draw_colored_box(r, r->prog_world, mat4_mul(mat4_translate(vec3_add(bp, vec3_make(0, 0.65f, 0))),
+                         mat4_scale(vec3_make(0.75f, 1.25f, 0.75f))), 0.86f, 0.16f, 0.16f, 1.0f, 0.18f);
+        draw_colored_box(r, r->prog_world, mat4_mul(mat4_translate(vec3_add(bp, vec3_make(0, 1.28f, 0))),
+                         mat4_scale(vec3_make(0.65f, 0.08f, 0.65f))), 0.35f, 1.0f, 0.30f, 1.0f, 0.85f);
+    }
+
+    /* Rolling Tomb Raider Boulders */
+    for (int i = 0; i < w->boulder_count; ++i) {
+        if (!w->boulders[i].active) continue;
+        float rot = w->boulders[i].rolling ? w->time_sec * 5.0f : 0.0f;
+        Mat4 bm = mat4_mul(mat4_translate(w->boulders[i].pos),
+                  mat4_mul(mat4_rotate_x(rot), mat4_scale(vec3_make(2.4f, 2.4f, 2.4f))));
+        draw_colored_box(r, r->prog_world, bm, 0.62f, 0.56f, 0.46f, 1.0f, 0.05f);
+    }
+
+    /* Glowing Green Magnesium Flares & Billowing CS Smoke Clouds */
+    for (int i = 0; i < WORLD_MAX_FLARES; ++i) {
+        const FlareLight *fl = &w->flares[i];
+        if (!fl->active) continue;
+        if (fl->is_smoke) {
+            draw_colored_box(r, r->prog_world, mat4_mul(mat4_translate(vec3_add(fl->pos, vec3_make(0, 1.6f, 0))),
+                             mat4_scale(vec3_make(4.6f, 3.6f, 4.6f))), 0.78f, 0.82f, 0.86f, 0.78f, 0.12f);
+        } else {
+            draw_colored_box(r, r->prog_world, mat4_mul(mat4_translate(fl->pos),
+                             mat4_scale(vec3_make(0.18f, 0.18f, 0.42f))), fl->r, fl->g, fl->b, 1.0f, 1.2f);
+        }
+    }
+
+    /* Quake Thunderbolt live crackling lightning arc! */
+    for (int i = 0; i < w->player_count; ++i) {
+        if (!w->players[i].active || w->players[i].lightning_timer <= 0.0f) continue;
+        Vec3 a = vec3_add(player_eye_pos(&w->players[i]), vec3_scale(player_forward(&w->players[i]), 0.8f));
+        Vec3 b = w->players[i].lightning_end;
+        for (int s = 1; s <= 8; ++s) {
+            Vec3 pt = vec3_lerp(a, b, (float)s / 8.0f);
+            float jit = sinf(w->time_sec * 45.0f + (float)s * 2.1f) * 0.14f;
+            draw_colored_box(r, r->prog_world, mat4_mul(mat4_translate(vec3_add(pt, vec3_make(jit, jit * 0.6f, 0))),
+                             mat4_scale(vec3_make(0.18f, 0.18f, 0.18f))), 0.45f, 0.94f, 1.0f, 0.95f, 1.3f);
+        }
     }
 
     /* Armed Laser Tripmines + Glowing Red Laser Beams */
@@ -1023,36 +1295,71 @@ static void render_scene_view(GlRenderer *r, const GameWorld *w, Mat4 proj, Mat4
                          0.92f, 0.14f, 0.18f, 1.0f, 0.15f);
     }
 
-    /* 3. Enemies */
+    /* 3. Enemies & Distinct 3D Act I Bosses */
     for (int i = 0; i < WORLD_MAX_ENEMIES; ++i) {
         const Enemy *e = &w->enemies[i];
         if (!e->active) continue;
         float fl = (e->hit_flash > 0.0f) ? 1.0f : 0.0f;
-        if (e->kind == ENEMY_BOSS_MECH) {
+        float burn = (e->burn_timer > 0.0f) ? 0.65f : 0.0f;
+        float blind = (e->blind_timer > 0.0f) ? 0.8f : 0.0f;
+
+        if (world_enemy_is_boss(e->kind)) {
             float bob = 0.09f * sinf(e->anim_time * 5.0f);
             float p3 = (w->boss_phase == 3) ? 0.35f : 0.0f;
+            float br = 0.78f, bg = 0.16f, bb = 0.20f;
+            if (e->kind == ENEMY_BOSS_TREX)       { br = 0.32f; bg = 0.56f; bb = 0.24f; }
+            else if (e->kind == ENEMY_BOSS_SHAMBLER)  { br = 0.86f; bg = 0.84f; bb = 0.90f; }
+            else if (e->kind == ENEMY_BOSS_MATRIARCH) { br = 0.46f; bg = 0.28f; bb = 0.52f; }
+            else if (e->kind == ENEMY_BOSS_CYBERTITAN){ br = 0.72f; bg = 0.36f; bb = 0.26f; }
+
             draw_colored_box(r, r->prog_world,
-                             mat4_mul(mat4_translate(vec3_add(e->pos, vec3_make(0, 1.7f + bob, 0))),
-                             mat4_mul(mat4_rotate_y(-e->yaw), mat4_scale(vec3_make(1.85f, 1.5f, 1.4f)))),
-                             0.78f + fl * 0.22f, 0.16f + fl * 0.5f, 0.20f + fl * 0.5f, 1.0f, 0.25f + p3 + fl * 0.5f);
+                             mat4_mul(mat4_translate(vec3_add(e->pos, vec3_make(0, 1.85f + bob, 0))),
+                             mat4_mul(mat4_rotate_y(-e->yaw), mat4_scale(vec3_make(2.0f, 1.65f, 1.55f)))),
+                             sw_clampf(br + fl * 0.25f + burn * 0.4f, 0, 1),
+                             sw_clampf(bg + fl * 0.4f + burn * 0.2f, 0, 1),
+                             sw_clampf(bb + fl * 0.4f, 0, 1), 1.0f, 0.22f + p3 + fl * 0.5f + burn * 0.5f);
             draw_colored_box(r, r->prog_world,
-                             mat4_mul(mat4_translate(vec3_add(e->pos, vec3_make(-0.6f, 0.65f, 0))),
-                                      mat4_scale(vec3_make(0.48f, 1.3f, 0.6f))),
-                             0.35f, 0.38f, 0.44f, 1.0f, 0.05f);
+                             mat4_mul(mat4_translate(vec3_add(e->pos, vec3_make(-0.65f, 0.70f, 0))),
+                                      mat4_scale(vec3_make(0.52f, 1.4f, 0.65f))), 0.36f, 0.38f, 0.44f, 1.0f, 0.08f);
             draw_colored_box(r, r->prog_world,
-                             mat4_mul(mat4_translate(vec3_add(e->pos, vec3_make(0.6f, 0.65f, 0))),
-                                      mat4_scale(vec3_make(0.48f, 1.3f, 0.6f))),
-                             0.35f, 0.38f, 0.44f, 1.0f, 0.05f);
+                             mat4_mul(mat4_translate(vec3_add(e->pos, vec3_make(0.65f, 0.70f, 0))),
+                                      mat4_scale(vec3_make(0.52f, 1.4f, 0.65f))), 0.36f, 0.38f, 0.44f, 1.0f, 0.08f);
+            /* Head / Visor / Horns / Wings accent */
+            float er = (e->kind == ENEMY_BOSS_SHAMBLER) ? 0.35f : 1.0f;
+            float eg = (e->kind == ENEMY_BOSS_TREX) ? 0.92f : (e->kind == ENEMY_BOSS_SHAMBLER ? 0.90f : 0.22f);
+            float eb = (e->kind == ENEMY_BOSS_SHAMBLER) ? 1.0f : 0.18f;
             draw_colored_box(r, r->prog_world,
-                             mat4_mul(mat4_translate(vec3_add(e->pos, vec3_make(0, 2.05f + bob, 0))),
-                                      mat4_scale(vec3_make(1.1f, 0.30f, 1.50f))),
-                             1.0f, w->boss_phase == 2 ? 0.9f : 0.2f, 0.15f, 1.0f, 1.05f);
+                             mat4_mul(mat4_translate(vec3_add(e->pos, vec3_make(0, 2.55f + bob, 0))),
+                                      mat4_scale(vec3_make(e->kind == ENEMY_BOSS_MATRIARCH ? 3.2f : 1.3f, 0.45f, 1.6f))),
+                             er, eg, eb, 1.0f, 0.95f);
         } else {
             float sc = (e->shrunk_timer > 0.0f) ? 0.35f : 1.0f;
-            int tile = (e->kind == ENEMY_PIGGUARD) ? 1 :
-                       (e->kind == ENEMY_OCTABRAIN ? 8 : (e->kind == ENEMY_TURRET ? 9 : 0));
+            int tile = 0;
+            float cr = 1.0f, cg = 1.0f, cb = 1.0f;
+            switch (e->kind) {
+                case ENEMY_PIGGUARD:         tile = 1; break;
+                case ENEMY_OCTABRAIN:        tile = 8; break;
+                case ENEMY_TURRET:           tile = 9; break;
+                case ENEMY_WOLF:             tile = 1; cr = 0.78f; cg = 0.68f; cb = 0.56f; sc *= 0.80f; break;
+                case ENEMY_BAT:              tile = 8; cr = 0.62f; cg = 0.42f; cb = 0.78f; sc *= 0.72f; break;
+                case ENEMY_STONE_GUARD:      tile = 1; cr = 0.96f; cg = 0.82f; cb = 0.44f; break;
+                case ENEMY_SYNDICATE_RIFLE:  tile = 0; cr = 0.78f; cg = 0.76f; cb = 0.64f; break;
+                case ENEMY_SYNDICATE_SNIPER: tile = 1; cr = 0.58f; cg = 0.74f; cb = 0.92f; break;
+                case ENEMY_OGRE:             tile = 1; cr = 0.92f; cg = 0.72f; cb = 0.46f; break;
+                case ENEMY_FIEND:            tile = 0; cr = 0.94f; cg = 0.45f; cb = 0.34f; break;
+                case ENEMY_DEATH_KNIGHT:     tile = 1; cr = 0.65f; cg = 0.62f; cb = 0.76f; break;
+                case ENEMY_CULTIST:          tile = 0; cr = 0.98f; cg = 0.34f; cb = 0.34f; break;
+                case ENEMY_GHOUL:            tile = 1; cr = 0.68f; cg = 0.85f; cb = 0.68f; break;
+                case ENEMY_GARGOYLE:         tile = 8; cr = 0.72f; cg = 0.68f; cb = 0.76f; break;
+                case ENEMY_IMP:              tile = 0; cr = 0.96f; cg = 0.52f; cb = 0.34f; break;
+                case ENEMY_PINKY:            tile = 1; cr = 1.00f; cg = 0.46f; cb = 0.66f; break;
+                case ENEMY_CACODEMON:        tile = 8; cr = 1.00f; cg = 0.28f; cb = 0.28f; break;
+                default: break;
+            }
+            if (burn > 0.0f) { cr = 1.0f; cg = 0.55f; cb = 0.18f; }
+            if (blind > 0.0f){ cr = 1.0f; cg = 1.0f;  cb = 1.0f;  }
             draw_billboard_sprite(r, e->pos, 1.25f * sc, 1.80f * sc, tile, cam_yaw,
-                                  1.0f, 1.0f - fl * 0.3f, 1.0f - fl * 0.3f, fl * 0.7f);
+                                  cr, cg, cb, sw_clampf(fl * 0.7f + burn + blind, 0.0f, 1.2f));
         }
     }
 
@@ -1068,32 +1375,45 @@ static void render_scene_view(GlRenderer *r, const GameWorld *w, Mat4 proj, Mat4
         float cr = 1.0f, cg = 1.0f, cb = 1.0f;
         switch (pk->kind) {
             case PICKUP_MEDKIT:      tile = 3; break;
-            case PICKUP_SHOTGUN:     tile = 11; break;
+            case PICKUP_SHOTGUN:
+            case PICKUP_WEAPON_GRANT:tile = 11; cr = 1.0f; cg = 0.92f; cb = 0.58f; break;
             case PICKUP_KEY_BLUE:    tile = 10; cr = 0.25f; cg = 0.65f; cb = 1.0f; break;
-            case PICKUP_KEY_RED:     tile = 10; cr = 1.0f; cg = 0.25f; cb = 0.28f; break;
+            case PICKUP_KEY_YELLOW:  tile = 10; cr = 1.0f;  cg = 0.92f; cb = 0.20f; break;
+            case PICKUP_KEY_RED:     tile = 10; cr = 1.0f;  cg = 0.25f; cb = 0.28f; break;
             case PICKUP_SHARD:       tile = 6; break;
+            case PICKUP_QUAD:        tile = 6; cr = 0.25f; cg = 0.65f; cb = 1.0f; break;
+            case PICKUP_BERSERK:     tile = 3; cr = 1.0f;  cg = 0.20f; cb = 0.22f; break;
+            case PICKUP_RADSUIT:     tile = 4; cr = 0.30f; cg = 1.0f;  cb = 0.35f; break;
+            case PICKUP_CASH:        tile = 6; cr = 0.35f; cg = 1.0f;  cb = 0.45f; break;
             case PICKUP_PIPEBOMB:    cr = 1.0f; cg = 0.40f; cb = 0.22f; break;
             case PICKUP_TRIPMINE:    cr = 1.0f; cg = 0.20f; cb = 0.30f; break;
             case PICKUP_ARMOR:       cr = 0.35f; cg = 0.85f; cb = 1.0f; break;
             case PICKUP_SHRINK_AMMO: cr = 0.30f; cg = 1.0f; cb = 0.40f; break;
             default: break;
         }
-        draw_billboard_sprite(r, pos, 0.85f, 0.85f, tile, cam_yaw, cr, cg, cb, 0.72f);
+        draw_billboard_sprite(r, pos, 0.85f, 0.85f, tile, cam_yaw, cr, cg, cb, 0.78f);
     }
 
     for (int i = 0; i < WORLD_MAX_PROJECTILES; ++i) {
         const Projectile *pr = &w->projectiles[i];
         if (!pr->active) continue;
-        if (pr->kind == PROJ_PIPEBOMB) {
+        if (pr->kind == PROJ_PIPEBOMB || pr->kind == PROJ_TNT_BUNDLE || pr->kind == PROJ_TNT_PROX ||
+            pr->kind == PROJ_MOLOTOV || pr->kind == PROJ_FLASHBANG || pr->kind == PROJ_ENEMY_GRENADE) {
+            float cr = (pr->kind == PROJ_FLASHBANG) ? 0.85f : 0.95f;
+            float cg = (pr->kind == PROJ_FLASHBANG) ? 0.92f : 0.28f;
+            float cb = (pr->kind == PROJ_FLASHBANG) ? 1.0f  : 0.18f;
             draw_colored_box(r, r->prog_world,
-                             mat4_mul(mat4_translate(pr->pos), mat4_scale(vec3_make(0.28f, 0.18f, 0.42f))),
-                             0.95f, 0.25f, 0.2f, 1.0f, 0.75f);
-        } else if (pr->kind == PROJ_SHRINK_ORB) {
-            draw_billboard_sprite(r, pr->pos, 0.62f, 0.62f, 4, cam_yaw, 0.25f, 1.0f, 0.38f, 1.1f);
+                             mat4_mul(mat4_translate(pr->pos), mat4_scale(vec3_make(0.28f, 0.20f, 0.42f))),
+                             cr, cg, cb, 1.0f, 0.80f);
+        } else if (pr->kind == PROJ_SHRINK_ORB || pr->kind == PROJ_BFG_ORB) {
+            float sz = (pr->kind == PROJ_BFG_ORB) ? 1.35f : 0.62f;
+            draw_billboard_sprite(r, pr->pos, sz, sz, 4, cam_yaw, 0.25f, 1.0f, 0.38f, 1.2f);
         } else if (pr->kind == PROJ_OCTA_WAVE) {
             draw_billboard_sprite(r, pr->pos, 0.70f, 0.70f, 4, cam_yaw, 0.85f, 0.30f, 1.0f, 1.05f);
+        } else if (pr->kind == PROJ_NAIL) {
+            draw_billboard_sprite(r, pr->pos, 0.32f, 0.32f, 4, cam_yaw, 0.95f, 0.82f, 0.45f, 0.9f);
         } else {
-            draw_billboard_sprite(r, pr->pos, 0.55f, 0.55f, 5, cam_yaw, 1.0f, 0.35f, 0.2f, 1.05f);
+            draw_billboard_sprite(r, pr->pos, 0.60f, 0.60f, 5, cam_yaw, 1.0f, 0.42f, 0.18f, 1.1f);
         }
     }
 
@@ -1105,9 +1425,10 @@ static void render_scene_view(GlRenderer *r, const GameWorld *w, Mat4 proj, Mat4
                               sz, sz, 5, cam_yaw, w->explosions[i].r, w->explosions[i].g, w->explosions[i].b, 1.1f);
     }
 
-    if (viewer_slot >= 0 && viewer_slot < w->player_count && w->scene == SCENE_DAY01) {
+    if (viewer_slot >= 0 && viewer_slot < w->player_count &&
+        (w->scene == SCENE_DAY01 || (w->scene >= SCENE_DAY02 && w->scene <= SCENE_DAY06))) {
         const Player *p = &w->players[viewer_slot];
-        if (p->active && p->hp > 0) {
+        if (p->active && p->hp > 0 && !p->zoomed) {
             draw_weapon_viewmodel(r, p);
         }
     }
@@ -1141,6 +1462,7 @@ static const uint8_t *glyph_rows(char c) {
     static const uint8_t k4[5]={5,5,7,1,1}, k5[5]={7,4,7,1,7}, k6[5]={7,4,7,5,7}, k7[5]={7,1,1,2,2};
     static const uint8_t k8[5]={7,5,7,5,7}, k9[5]={7,5,7,1,7};
     static const uint8_t kColon[5]={0,2,0,2,0}, kSlash[5]={1,1,2,4,4}, kDash[5]={0,0,7,0,0}, kExcl[5]={2,2,2,0,2}, kDot[5]={0,0,0,0,2};
+    static const uint8_t kDollar[5]={7,6,7,3,7};
     if (c >= 'a' && c <= 'z') c = (char)(c - 'a' + 'A');
     switch (c) {
         case 'A': return kA; case 'B': return kB; case 'C': return kC; case 'D': return kD;
@@ -1154,7 +1476,7 @@ static const uint8_t *glyph_rows(char c) {
         case '4': return k4; case '5': return k5; case '6': return k6; case '7': return k7;
         case '8': return k8; case '9': return k9;
         case ':': return kColon; case '/': return kSlash; case '-': return kDash;
-        case '!': return kExcl;  case '.': return kDot;
+        case '!': return kExcl;  case '.': return kDot;   case '$': return kDollar;
         default: return kSpace;
     }
 }
@@ -1204,7 +1526,6 @@ static void draw_minimap(const GameWorld *w, const Player *p, float aspect) {
     float cyaw = cosf(-p->yaw);
     float syaw = sinf(-p->yaw);
 
-    /* Plot nearby enemies (red dots) */
     for (int i = 0; i < WORLD_MAX_ENEMIES; ++i) {
         if (!w->enemies[i].active) continue;
         float dx = w->enemies[i].pos.x - p->pos.x;
@@ -1212,13 +1533,12 @@ static void draw_minimap(const GameWorld *w, const Player *p, float aspect) {
         float rx = (dx * cyaw - dz * syaw) / range;
         float rz = (dx * syaw + dz * cyaw) / range;
         if (fabsf(rx) < 0.92f && fabsf(rz) < 0.92f) {
-            float sz = (w->enemies[i].kind == ENEMY_BOSS_MECH) ? 0.010f : 0.006f;
+            float sz = world_enemy_is_boss(w->enemies[i].kind) ? 0.011f : 0.006f;
             hud_rect(cx + rx * mw * 0.45f - sz * 0.5f, cy + rz * mh * 0.45f - sz * aspect * 0.5f,
                      sz, sz * aspect, 1.0f, 0.22f, 0.28f, 0.95f);
         }
     }
 
-    /* Plot active objective beacon (gold square clamped to radar rim!) */
     float odx = w->objective_pos.x - p->pos.x;
     float odz = w->objective_pos.z - p->pos.z;
     float orx = sw_clampf((odx * cyaw - odz * syaw) / range, -0.90f, 0.90f);
@@ -1226,7 +1546,6 @@ static void draw_minimap(const GameWorld *w, const Player *p, float aspect) {
     hud_rect(cx + orx * mw * 0.45f - 0.005f, cy + orz * mh * 0.45f - 0.005f * aspect,
              0.010f, 0.010f * aspect, 1.0f, 0.88f, 0.22f, 1.0f);
 
-    /* Player center chevron (bright cyan) */
     hud_rect(cx - 0.004f, cy - 0.004f * aspect, 0.008f, 0.008f * aspect, 0.25f, 0.95f, 1.0f, 1.0f);
 }
 
@@ -1240,15 +1559,30 @@ static void draw_player_hud(GlRenderer *r, const GameWorld *w, int pi, int vw, i
     float ch_w = 0.016f / (aspect < 1.0f ? 1.0f : aspect);
     float ch_h = ch_w * aspect;
 
-    if (p->damage_flash > 0.0f) hud_rect(0, 0, 1, 1, 0.9f, 0.1f, 0.1f, p->damage_flash * 0.6f);
-    if (p->stomp_flash > 0.0f)  hud_rect(0, 0, 1, 1, 0.2f, 1.0f, 0.35f, p->stomp_flash * 0.45f);
+    /* Status & Tactical Overlays */
+    if (p->in_water)             hud_rect(0, 0, 1, 1, 0.08f, 0.42f, 0.68f, 0.22f);
+    if (p->quad_timer > 0.0f)    hud_rect(0, 0, 1, 1, 0.16f, 0.42f, 1.00f, 0.18f);
+    if (p->berserk_timer > 0.0f) hud_rect(0, 0, 1, 1, 0.95f, 0.12f, 0.12f, 0.22f);
+    if (p->rad_suit_timer > 0.0f)hud_rect(0, 0, 1, 1, 0.15f, 0.88f, 0.25f, 0.14f);
+    if (p->damage_flash > 0.0f)  hud_rect(0, 0, 1, 1, 0.9f, 0.1f, 0.1f, p->damage_flash * 0.6f);
+    if (p->stomp_flash > 0.0f)   hud_rect(0, 0, 1, 1, 0.2f, 1.0f, 0.35f, p->stomp_flash * 0.45f);
+    if (p->flash_blind_timer > 0.0f) hud_rect(0, 0, 1, 1, 1.0f, 1.0f, 1.0f, sw_clampf(p->flash_blind_timer, 0.0f, 0.85f));
 
-    /* Crosshair + Hitmarker flash */
-    float cr = p->hitmarker_timer > 0.0f ? 1.0f : 1.0f;
-    float cg = p->hitmarker_timer > 0.0f ? 0.25f : 0.95f;
-    float cb = p->hitmarker_timer > 0.0f ? 0.25f : 0.30f;
-    hud_rect(0.5f - ch_w * 0.15f, 0.5f - ch_h * 0.5f, ch_w * 0.3f, ch_h, cr, cg, cb, 0.92f);
-    hud_rect(0.5f - ch_w * 0.5f, 0.5f - ch_h * 0.15f, ch_w, ch_h * 0.3f, cr, cg, cb, 0.92f);
+    /* CS Sniper Scope Overlay OR Crosshair + Hitmarker */
+    if (p->zoomed) {
+        hud_rect(0.0f, 0.0f, 0.22f, 1.0f, 0.02f, 0.02f, 0.03f, 0.92f);
+        hud_rect(0.78f, 0.0f, 0.22f, 1.0f, 0.02f, 0.02f, 0.03f, 0.92f);
+        hud_rect(0.22f, 0.0f, 0.56f, 0.14f, 0.02f, 0.02f, 0.03f, 0.92f);
+        hud_rect(0.22f, 0.86f, 0.56f, 0.14f, 0.02f, 0.02f, 0.03f, 0.92f);
+        hud_rect(0.499f, 0.14f, 0.002f, 0.72f, 0.15f, 0.95f, 0.35f, 0.85f);
+        hud_rect(0.22f, 0.499f, 0.56f, 0.002f, 0.15f, 0.95f, 0.35f, 0.85f);
+    } else {
+        float cr = 1.0f;
+        float cg = p->hitmarker_timer > 0.0f ? 0.25f : 0.95f;
+        float cb = p->hitmarker_timer > 0.0f ? 0.25f : 0.30f;
+        hud_rect(0.5f - ch_w * 0.15f, 0.5f - ch_h * 0.5f, ch_w * 0.3f, ch_h, cr, cg, cb, 0.92f);
+        hud_rect(0.5f - ch_w * 0.5f, 0.5f - ch_h * 0.15f, ch_w, ch_h * 0.3f, cr, cg, cb, 0.92f);
+    }
 
     /* Top objective / banner strip */
     float banner_y = (aspect < 1.0f) ? 0.068f : 0.105f;
@@ -1279,25 +1613,34 @@ static void draw_player_hud(GlRenderer *r, const GameWorld *w, int pi, int vw, i
         }
     }
 
-    /* Bottom status bar with Weapons, Ammo, Keys & Secrets */
+    /* Bottom status bar with Weapons, Ammo, Keys/Cash & Secrets */
     float bar_h = px_h * 9.2f;
     float bar_y = ((aspect < 1.0f) ? 0.988f : 0.942f) - bar_h;
     hud_rect(0.02f, bar_y, 0.96f, bar_h, 0.05f, 0.05f, 0.11f, 0.84f);
 
-    static const char *kWeapNames[WEAP_COUNT] = {"PISTOL", "SHOTGN", "SHRINK", "BOMB", "MINE"};
-    int cur_ammo = (p->weapon == WEAP_SHOTGUN) ? p->ammo_shells :
-                   (p->weapon == WEAP_SHRINKER ? p->ammo_shrink :
-                   (p->weapon == WEAP_PIPEBOMB ? p->ammo_pipebomb :
-                   (p->weapon == WEAP_TRIPMINE ? p->ammo_tripmine : 99)));
-    char keys_str[8] = "--";
-    if (p->keys & KEY_BLUE) keys_str[0] = 'B';
-    if (p->keys & KEY_RED)  keys_str[1] = 'R';
+    const char *wname = world_weapon_short_name(p->weapon);
+    int cur_ammo = world_player_weapon_ammo(p, p->weapon);
+    char keys_str[8] = "---";
+    if (p->keys & KEY_BLUE)   keys_str[0] = 'B';
+    if (p->keys & KEY_YELLOW) keys_str[1] = 'Y';
+    if (p->keys & KEY_RED)    keys_str[2] = 'R';
 
     char stats[128];
-    snprintf(stats, sizeof(stats), "HP:%d AR:%d J:%d %s:%d K:%s SEC:%d/%d",
-             p->hp, p->armor, (int)p->jetpack_fuel, kWeapNames[p->weapon], cur_ammo,
-             keys_str, w->secrets_found, w->secret_count);
-    hud_text(0.035f, bar_y + px_h * 2.0f, px_w, px_h, stats, 0.96f, 0.97f, 1.0f, 1.0f);
+    if (w->scene == SCENE_DAY03) {
+        snprintf(stats, sizeof(stats), "HP:%d AR:%d $%d %s:%d C4:%d/2%s",
+                 p->hp, p->armor, p->cash, wname, cur_ammo, w->bombs_defused,
+                 p->has_defuse_kit ? " KIT" : "");
+    } else if (w->scene == SCENE_DAY01) {
+        snprintf(stats, sizeof(stats), "HP:%d AR:%d J:%d %s:%d K:%s SEC:%d/%d",
+                 p->hp, p->armor, (int)p->jetpack_fuel, wname, cur_ammo,
+                 keys_str, w->secrets_found, w->secret_count);
+    } else {
+        snprintf(stats, sizeof(stats), "HP:%d AR:%d %s:%d K:%s SEC:%d/%d%s",
+                 p->hp, p->armor, wname, cur_ammo, keys_str,
+                 w->secrets_found, w->secret_count,
+                 p->quad_timer > 0.0f ? " QUAD!" : (p->berserk_timer > 0.0f ? " BERSK" : ""));
+    }
+    hud_text(0.035f, bar_y + px_h * 2.0f, px_w * 0.95f, px_h * 0.95f, stats, 0.96f, 0.97f, 1.0f, 1.0f);
 
     flush_hud(r);
 }
@@ -1374,7 +1717,7 @@ void gl_renderer_render_frame(GlRenderer *r, GameWorld *w, const TouchController
         Vec3 eye = player_eye_pos(p);
         Vec3 fwd = player_forward(p);
         float aspect = (float)vw / (float)(vh > 0 ? vh : 1);
-        float fovy = (aspect < 1.0f) ? 85.0f : 70.0f;
+        float fovy = p->zoomed ? 28.0f : ((aspect < 1.0f) ? 85.0f : 70.0f);
         Mat4 proj = mat4_perspective(fovy * SW_PI / 180.0f, aspect, 0.1f, 110.0f);
         Mat4 view = mat4_look_at(eye, vec3_add(eye, fwd), vec3_make(0, 1, 0));
         render_scene_view(r, w, proj, view, eye, p->yaw, pi, light_vp, sun_dir);
