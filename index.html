@@ -91,8 +91,15 @@
 
   <div id="topbar">
     <span class="badge">SWIETA 2026</span>
-    <button id="btnHub" title="Return to Grand Festive Hall (H)">Hall</button>
-    <button id="btnDay1" class="accent" title="Jump to Day 1: Neon Strip '96">Day 1</button>
+    <select id="selRealm" title="Jump to Grand Hall or Act I Portals (Days 1-6)">
+      <option value="0">Grand Hall</option>
+      <option value="1">Day 1: Duke '96</option>
+      <option value="2">Day 2: Tomb Raider</option>
+      <option value="3">Day 3: de_yule_dust</option>
+      <option value="4">Day 4: Quake</option>
+      <option value="5">Day 5: Blood</option>
+      <option value="6">Day 6: Doom Climax</option>
+    </select>
     <select id="selSplit" title="Local Split-Screen Players (F3)">
       <option value="1">1P Solo</option>
       <option value="2">2P Split</option>
@@ -138,7 +145,7 @@
   </div>
 
   <div id="statusBar">
-    Loading WASM... | Click canvas to aim | WASD Move · Space/Hold Jetpack · LMB Fire · RMB Detonate · 1-5 Weapons · R Holo · E Use
+    Loading WASM... | Click canvas to aim | WASD Move · Space Jump/Swim/Mantle · LMB Fire · RMB Alt-Fire · 1-5 Weap · E Use
   </div>
 
   <script src="webrtc_bridge.js"></script>
@@ -174,7 +181,8 @@
       print: (txt) => console.log("[SWIETA]", txt),
       printErr: (txt) => console.warn("[SWIETA]", txt),
       onRuntimeInitialized: () => {
-        statusEl.textContent = "Click canvas to aim | WASD Move · Space Jetpack · LMB Fire · RMB Bomb · 1-5 Weap · R Holo · E Use";
+        statusEl.textContent = "Click canvas to aim | WASD Move · Space Jump/Swim/Mantle · LMB Fire · RMB Alt-Fire · 1-5 Weap · E Use";
+        if (startDay >= 1 && startDay <= 6) document.getElementById("selRealm").value = String(startDay);
         setTimeout(() => {
           syncViewportSize();
           if (Module._swieta_set_unlock_all) Module._swieta_set_unlock_all(unlockAll ? 1 : 0);
@@ -187,12 +195,9 @@
     };
 
     document.getElementById("menuToggle").onclick = () => topbar.classList.toggle("open");
-    document.getElementById("btnHub").onclick = () => {
-      Module._swieta_jump_to_day && Module._swieta_jump_to_day(0);
-      topbar.classList.remove("open");
-    };
-    document.getElementById("btnDay1").onclick = () => {
-      Module._swieta_jump_to_day && Module._swieta_jump_to_day(1);
+    document.getElementById("selRealm").onchange = (e) => {
+      const d = parseInt(e.target.value, 10);
+      if (Module._swieta_jump_to_day) Module._swieta_jump_to_day(d);
       topbar.classList.remove("open");
     };
     document.getElementById("selSplit").onchange = (e) => {
@@ -219,7 +224,7 @@
     document.getElementById("btnMpClose").onclick = () => { document.getElementById("mpModal").style.display = "none"; };
     document.getElementById("btnXR").onclick = () => window.SwietaXR && window.SwietaXR.toggleSession();
     document.getElementById("btnHelp").onclick = () => {
-      alert("SWIETA 2026 CONTROLS:\n\nMOBILE TOUCH:\nLeft Thumb: Move (outer ring sprints)\nRight Drag: Look\nButtons: FIRE / DET (Pipebomb) / JUMP (hold Jetpack) / USE / WEAP (cycles 5 weapons) / HOLO\n\nDESKTOP:\nWASD: Move · Mouse: Look\n1: Pistol · 2: Shotgun (break Pawnshop glass!) · 3: Shrink-Ray (shoot Mirror to self-shrink into vents!) · 4: Pipebomb · 5: Laser Tripmine (plant on walls)\nLMB: Fire · RMB: Detonate · Space/V: Jump/Jetpack · R: Holo-Decoy · E: Use · Tab: Cycle Weapon · H: Grand Hall");
+      alert("SWIETA 2026 — ACT I (DAYS 1-6) CONTROLS:\n\nWASD: Move · Mouse/Drag: Look · 1-5 / Tab / WEAP: Level Weapons\nLMB / FIRE: Primary Fire · RMB / DET: Alt-Fire (Pipebomb Det / Tomb Dodge / CS Sniper Scope & Smoke / Blood Starburst, Molotov, Prox TNT & Voodoo Curse)\nSpace / JUMP: Jump, Swim Up, Ledge Mantle, or Day 1 Jetpack\nE / USE: Push Blocks, Flip Switches, CS Buy Crate ($), Defuse C4, Open Doors\nH: Return to Grand Festive Hall");
     };
   </script>
   <script async src="swieta2026.js"></script>
