@@ -1,0 +1,8 @@
+# Tasks: Visual Overhaul — High-Detail Textured, Normal-Mapped, Sculpted Retro-3D Renderer
+
+- [x] 1. Upgrade `src/render/gl_renderer.h` with `MeshGpu` primitive library handles, `voxel_normal_tex` (`GL_TEXTURE2`), `prog_sky` shader program, and expanded `20×2` animated `64×64` sprite atlas metadata.
+- [x] 2. Implement `prog_sky` procedural biome skybox shader, `1024×192` (`64×64` tiles) high-detail diffuse + tangent-space normal/gloss atlas generator (`src/render/retro_art.c`), and tangent-space normal-mapped + specular + 3×3 PCF shadow + ACES filmic world shader in `src/render/gl_renderer.c`.
+- [x] 3. Implement pre-baked 3D mesh primitives (Cylinder, Sphere, Cone, Box), sculpted articulated 3D bosses, ribbed cylindrical barrels, craggy boulders, multi-sphere smoke, sculpted 4-tier conical Christmas tree with baubles & fairy lights, drifting snow/ember particles, and multi-part sculpted first-person weapon viewmodels with iron sights, wood/metal details, gloved hands & starburst muzzle flashes in `src/render/gl_renderer.c`.
+- [x] 4. Implement `1280×128` (`64×64` × `20` archetypes × `2` frames) high-detail hand-shaded & outlined animated enemy & pickup sprite atlas in `src/render/retro_art.c`.
+- [x] 5. Update default resolution to `640×360` in `src/platform/sdl_main.c` and crisp/HD/retro resolution presets in `web/index.html`.
+- [x] 6. Build and verify Linux, Windows CI, Emscripten Web/WebXR, ≥95% coverage (97.3% lines / 100% functions), and visually inspect screenshots of Hub + Days 1–6 (desktop + mobile portrait) in headless Chrome with zero WebGL2/JS errors, archive OpenSpec change, push to `main`, and deploy to `gh-pages`.

@@ -64,6 +64,7 @@ if(SWIETA_BUILD_APP)
 
     add_executable(swieta2026
         src/render/gl_loader.c
+        src/render/retro_art.c
         src/render/gl_renderer.c
         src/platform/sdl_main.c
     )
@@ -78,7 +79,8 @@ if(SWIETA_BUILD_APP)
             "-sUSE_WEBGL2=1"
             "-sFULL_ES3=1"
             "-sALLOW_MEMORY_GROWTH=1"
-            "-sINITIAL_MEMORY=33554432"
+            "-sINITIAL_MEMORY=67108864"
+            "-sSTACK_SIZE=1048576"
             "-sEXPORTED_FUNCTIONS=['_main','_malloc','_free','_swieta_set_split_screen','_swieta_set_unlock_all','_swieta_set_retro_res','_swieta_resize','_swieta_toggle_touch','_swieta_jump_to_day','_swieta_net_set_role','_swieta_net_on_packet','_swieta_xr_begin_frame','_swieta_xr_render_eye']"
             "-sEXPORTED_RUNTIME_METHODS=['HEAPU8','HEAPF32','UTF8ToString','stringToUTF8']"
         )

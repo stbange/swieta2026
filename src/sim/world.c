@@ -474,14 +474,11 @@ void world_load_hub(GameWorld *w) {
     voxel_set(&w->voxels, 58, 6, 30, VOX_GOLD);
     voxel_set(&w->voxels, 70, 6, 30, VOX_GOLD);
 
-    /* Towering 24-Ornament Voxel Christmas Tree at (64, 1..14, 64) */
+    /* Towering 24-Ornament Christmas Tree Core at (64, 1..14, 64) wrapped by sculpted 3D pine boughs */
     voxel_fill_box(&w->voxels, 63, 1, 63, 65, 3, 65, VOX_WOOD);
-    voxel_fill_box(&w->voxels, 59, 4, 59, 69, 6, 69, VOX_LEAVES);
-    voxel_fill_box(&w->voxels, 60, 7, 60, 68, 9, 68, VOX_LEAVES);
-    voxel_fill_box(&w->voxels, 61, 10, 61, 67, 11, 67, VOX_LEAVES);
-    voxel_fill_box(&w->voxels, 62, 12, 62, 66, 13, 66, VOX_LEAVES);
-    voxel_fill_box(&w->voxels, 63, 14, 63, 65, 14, 65, VOX_LEAVES);
-    voxel_set(&w->voxels, 64, 15, 64, VOX_GOLD);
+    voxel_fill_box(&w->voxels, 62, 4, 62, 66, 6, 66, VOX_LEAVES);
+    voxel_fill_box(&w->voxels, 63, 7, 63, 65, 12, 65, VOX_LEAVES);
+    voxel_set(&w->voxels, 64, 13, 64, VOX_GOLD);
 
     voxel_set(&w->voxels, 60, 1, 61, VOX_GIFT);
     voxel_set(&w->voxels, 68, 1, 62, VOX_GIFT);

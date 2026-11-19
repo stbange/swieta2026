@@ -1,4 +1,5 @@
 #include "render/gl_renderer.h"
+#include "render/retro_art.h"
 
 #include <math.h>
 #include <stdio.h>
@@ -11,8 +12,200 @@
 #define GLSL_HEADER "#version 330 core\n"
 #endif
 
-#define SHADOW_SIZE 512
-#define SPRITE_TILES 12
+#define SHADOW_SIZE 1024
+
+/* ============================================================================
+ * SHADERS: Procedural Biome Skybox, Shadow Depth, Normal-Mapped Specular World,
+ * Filmic Post-Process, and 2D HUD
+ * ============================================================================ */
+
+static const char *kSkyVS =
+    GLSL_HEADER
+    "layout(location=0) in vec2 aPos;\n"
+    "layout(location=1) in vec2 aUV;\n"
+    "out vec2 vUV;\n"
+    "void main() {\n"
+    "  vUV = aUV;\n"
+    "  gl_Position = vec4(aPos, 0.9999, 1.0);\n"
+    "}\n";
+
+static const char *kSkyFS =
+    GLSL_HEADER
+    "in vec2 vUV;\n"
+    "uniform vec3 uCamRight;\n"
+    "uniform vec3 uCamUp;\n"
+    "uniform vec3 uCamFwd;\n"
+    "uniform vec2 uInvProj;\n"
+    "uniform int uSceneId;\n"
+    "uniform float uTime;\n"
+    "out vec4 FragColor;\n"
+    "float hash21(vec2 p) {\n"
+    "  p = fract(p * vec2(123.34, 456.21));\n"
+    "  p += dot(p, p + 45.32);\n"
+    "  return fract(p.x * p.y);\n"
+    "}\n"
+    "float vnoise(vec2 p) {\n"
+    "  vec2 i = floor(p);\n"
+    "  vec2 f = fract(p);\n"
+    "  f = f * f * (3.0 - 2.0 * f);\n"
+    "  float a = hash21(i);\n"
+    "  float b = hash21(i + vec2(1.0, 0.0));\n"
+    "  float c = hash21(i + vec2(0.0, 1.0));\n"
+    "  float d = hash21(i + vec2(1.0, 1.0));\n"
+    "  return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);\n"
+    "}\n"
+    "float fbm(vec2 p) {\n"
+    "  float s = 0.0;\n"
+    "  float a = 0.5;\n"
+    "  for (int i = 0; i < 4; ++i) {\n"
+    "    s += vnoise(p) * a;\n"
+    "    p = p * 2.03 + vec2(17.1, 31.7);\n"
+    "    a *= 0.5;\n"
+    "  }\n"
+    "  return s;\n"
+    "}\n"
+    "void main() {\n"
+    "  vec2 ndc = vUV * 2.0 - 1.0;\n"
+    "  vec3 dir = normalize(uCamFwd + uCamRight * (ndc.x * uInvProj.x) + uCamUp * (ndc.y * uInvProj.y));\n"
+    "  float y = dir.y;\n"
+    "  float az = atan(dir.z, dir.x);\n"
+    "  vec2 dome = dir.xz / (abs(y) + 0.34);\n"
+    "  vec3 col = vec3(0.05, 0.06, 0.12);\n"
+    "\n"
+    "  if (uSceneId == 1) { /* Day 1: Duke Nukem 3D Neon LA Night Skyline */\n"
+    "    vec3 horiz = vec3(0.24, 0.09, 0.30);\n"
+    "    vec3 mid   = vec3(0.06, 0.07, 0.22);\n"
+    "    vec3 zen   = vec3(0.02, 0.03, 0.09);\n"
+    "    col = mix(horiz, mid, smoothstep(-0.04, 0.26, y));\n"
+    "    col = mix(col, zen, smoothstep(0.24, 0.78, y));\n"
+    "    float clouds = fbm(dome * 1.1 + vec2(uTime * 0.015, 0.0));\n"
+    "    col += vec3(0.18, 0.06, 0.22) * smoothstep(0.45, 0.85, clouds) * smoothstep(0.0, 0.3, y);\n"
+    "    if (y > 0.04) {\n"
+    "      vec2 sp = vec2(az * 92.0, y * 118.0);\n"
+    "      vec2 sg = floor(sp);\n"
+    "      vec2 sf = fract(sp) - 0.5;\n"
+    "      float st = hash21(sg);\n"
+    "      if (st > 0.965) {\n"
+    "        float dotS = smoothstep(0.18, 0.02, length(sf));\n"
+    "        float tw = 0.65 + 0.35 * sin(uTime * 2.5 + st * 90.0);\n"
+    "        col += vec3(0.88, 0.94, 1.0) * dotS * tw * smoothstep(0.04, 0.25, y);\n"
+    "      }\n"
+    "    }\n"
+    "    /* Sweeping LA Searchlight Beams */\n"
+    "    float beam1 = abs(sin(az * 2.0 + sin(uTime * 0.65) * 0.85));\n"
+    "    col += vec3(0.16, 0.26, 0.38) * smoothstep(0.08, 0.0, beam1) * smoothstep(0.0, 0.45, y) * (1.0 - smoothstep(0.45, 0.9, y));\n"
+    "    /* Distant Moon */\n"
+    "    vec3 moonDir = normalize(vec3(-0.45, 0.42, -0.78));\n"
+    "    float md = dot(dir, moonDir);\n"
+    "    col += vec3(0.95, 0.94, 0.82) * smoothstep(0.9965, 0.9985, md);\n"
+    "    col += vec3(0.24, 0.28, 0.46) * pow(max(md, 0.0), 48.0) * 0.55;\n"
+    "    /* Silhouetted City Skyline with Lit Neon/Gold Windows */\n"
+    "    float bcol = floor((az + 3.14159) * 14.0);\n"
+    "    float bh = 0.09 + hash21(vec2(bcol, 3.0)) * 0.21;\n"
+    "    if (y < bh) {\n"
+    "      vec3 bld = vec3(0.03, 0.03, 0.07);\n"
+    "      float wx = fract((az + 3.14159) * 14.0);\n"
+    "      float wy = fract(y * 78.0);\n"
+    "      if (y > 0.005 && wx > 0.16 && wx < 0.84 && wy > 0.28 && wy < 0.72) {\n"
+    "        float wseed = hash21(vec2(bcol * 7.0 + floor(wx * 4.0), floor(y * 78.0)));\n"
+    "        if (wseed > 0.62) {\n"
+    "          vec3 wc = (wseed > 0.88) ? vec3(1.0, 0.28, 0.78) : ((wseed > 0.76) ? vec3(0.25, 0.92, 1.0) : vec3(1.0, 0.84, 0.42));\n"
+    "          bld = mix(bld, wc, 0.82);\n"
+    "        }\n"
+    "      }\n"
+    "      col = bld;\n"
+    "    }\n"
+    "  } else if (uSceneId == 3) { /* Day 2: Tomb Raider Sunlit Peruvian Andean Peaks */\n"
+    "    vec3 horiz = vec3(0.76, 0.72, 0.58);\n"
+    "    vec3 mid   = vec3(0.28, 0.56, 0.82);\n"
+    "    vec3 zen   = vec3(0.11, 0.28, 0.58);\n"
+    "    col = mix(horiz, mid, smoothstep(-0.02, 0.25, y));\n"
+    "    col = mix(col, zen, smoothstep(0.22, 0.82, y));\n"
+    "    vec3 sunDir = normalize(vec3(0.42, 0.48, -0.76));\n"
+    "    float sd = max(dot(dir, sunDir), 0.0);\n"
+    "    col += vec3(1.0, 0.88, 0.58) * pow(sd, 12.0) * 0.42;\n"
+    "    col += vec3(1.0, 0.98, 0.88) * smoothstep(0.994, 0.998, sd);\n"
+    "    float cl = fbm(dome * 0.95 + vec2(uTime * 0.012, -uTime * 0.008));\n"
+    "    col = mix(col, vec3(0.96, 0.94, 0.88), smoothstep(0.52, 0.82, cl) * smoothstep(0.05, 0.30, y) * 0.65);\n"
+    "    float mtn = 0.04 + 0.14 * fbm(vec2(az * 3.2 + 2.0, 1.5));\n"
+    "    if (y < mtn) {\n"
+    "      float snowCap = smoothstep(mtn - 0.032, mtn - 0.006, y);\n"
+    "      vec3 rock = mix(vec3(0.18, 0.16, 0.20), vec3(0.32, 0.28, 0.26), smoothstep(0.0, mtn, y));\n"
+    "      col = mix(rock, vec3(0.88, 0.90, 0.94), snowCap * 0.85);\n"
+    "    }\n"
+    "  } else if (uSceneId == 4) { /* Day 3: Counter-Strike de_yule_dust Desert Noon */\n"
+    "    vec3 horiz = vec3(0.86, 0.80, 0.66);\n"
+    "    vec3 mid   = vec3(0.42, 0.68, 0.92);\n"
+    "    vec3 zen   = vec3(0.18, 0.46, 0.82);\n"
+    "    col = mix(horiz, mid, smoothstep(-0.02, 0.26, y));\n"
+    "    col = mix(col, zen, smoothstep(0.24, 0.80, y));\n"
+    "    vec3 sunDir = normalize(vec3(0.35, 0.65, 0.66));\n"
+    "    float sd = max(dot(dir, sunDir), 0.0);\n"
+    "    col += vec3(1.0, 0.94, 0.78) * pow(sd, 16.0) * 0.35;\n"
+    "    col += vec3(1.0, 0.99, 0.92) * smoothstep(0.995, 0.9985, sd);\n"
+    "    float cl = fbm(dome * 0.75 + vec2(uTime * 0.010, 0.0));\n"
+    "    col = mix(col, vec3(0.98, 0.96, 0.90), smoothstep(0.55, 0.86, cl) * smoothstep(0.08, 0.32, y) * 0.55);\n"
+    "    float dune = 0.015 + 0.055 * fbm(vec2(az * 2.5, 4.1));\n"
+    "    if (y < dune) col = mix(vec3(0.66, 0.54, 0.38), vec3(0.78, 0.66, 0.48), smoothstep(-0.05, dune, y));\n"
+    "  } else if (uSceneId == 5) { /* Day 4: Quake Dual-Layer Scrolling Storm Sky */\n"
+    "    vec2 p1 = dome * 1.15 + vec2(uTime * 0.045, uTime * 0.018);\n"
+    "    vec2 p2 = dome * 2.10 + vec2(-uTime * 0.070, uTime * 0.032);\n"
+    "    float c1 = fbm(p1);\n"
+    "    float c2 = fbm(p2);\n"
+    "    vec3 baseSky = mix(vec3(0.12, 0.07, 0.14), vec3(0.28, 0.16, 0.24), c1);\n"
+    "    vec3 upper   = mix(vec3(0.06, 0.04, 0.09), vec3(0.44, 0.28, 0.18), smoothstep(0.38, 0.82, c2));\n"
+    "    col = mix(baseSky, upper, 0.55);\n"
+    "    float flash = pow(max(sin(uTime * 1.7) * sin(uTime * 4.3), 0.0), 18.0);\n"
+    "    col += vec3(0.45, 0.35, 0.68) * flash * smoothstep(0.45, 0.85, c2);\n"
+    "    col = mix(vec3(0.18, 0.10, 0.08), col, smoothstep(-0.04, 0.22, y));\n"
+    "  } else if (uSceneId == 6) { /* Day 5: Blood Harvest Crimson Moon & Gothic Fog */\n"
+    "    vec3 horiz = vec3(0.24, 0.06, 0.16);\n"
+    "    vec3 mid   = vec3(0.10, 0.04, 0.15);\n"
+    "    vec3 zen   = vec3(0.03, 0.02, 0.07);\n"
+    "    col = mix(horiz, mid, smoothstep(-0.03, 0.24, y));\n"
+    "    col = mix(col, zen, smoothstep(0.22, 0.78, y));\n"
+    "    vec3 moonDir = normalize(vec3(0.25, 0.32, -0.91));\n"
+    "    float md = max(dot(dir, moonDir), 0.0);\n"
+    "    float crater = 0.82 + 0.18 * fbm(dir.xy * 18.0);\n"
+    "    col += vec3(0.88, 0.12, 0.14) * pow(md, 14.0) * 0.62;\n"
+    "    col = mix(col, vec3(1.0, 0.26, 0.18) * crater, smoothstep(0.986, 0.991, md));\n"
+    "    float mist = fbm(dome * 1.3 + vec2(uTime * 0.03, 0.0));\n"
+    "    col = mix(col, vec3(0.18, 0.06, 0.18), smoothstep(0.48, 0.84, mist) * 0.55);\n"
+    "    float spire = 0.03 + 0.08 * pow(fbm(vec2(az * 6.0, 2.0)), 1.6);\n"
+    "    if (y < spire) col = vec3(0.03, 0.02, 0.04);\n"
+    "  } else if (uSceneId == 7) { /* Day 6: Doom Phobos Hellfire Brimstone Sky */\n"
+    "    vec2 p1 = dome * 1.2 + vec2(uTime * 0.035, -uTime * 0.02);\n"
+    "    float cl = fbm(p1);\n"
+    "    vec3 horiz = vec3(0.82, 0.26, 0.08);\n"
+    "    vec3 mid   = vec3(0.36, 0.08, 0.06);\n"
+    "    vec3 zen   = vec3(0.12, 0.03, 0.04);\n"
+    "    col = mix(horiz, mid, smoothstep(-0.02, 0.28, y));\n"
+    "    col = mix(col, zen, smoothstep(0.26, 0.80, y));\n"
+    "    col += vec3(0.52, 0.18, 0.04) * smoothstep(0.42, 0.84, cl) * (1.0 - smoothstep(0.25, 0.85, y));\n"
+    "    float peak = 0.03 + 0.16 * pow(fbm(vec2(az * 4.5 + 1.0, 7.2)), 1.3);\n"
+    "    if (y < peak) {\n"
+    "      float rim = smoothstep(peak - 0.018, peak, y);\n"
+    "      col = mix(vec3(0.08, 0.03, 0.03), vec3(0.68, 0.22, 0.06), rim * 0.65);\n"
+    "    }\n"
+    "  } else { /* Grand Festive Hall & Preview: Starry Winter Night + Aurora */\n"
+    "    vec3 horiz = vec3(0.10, 0.08, 0.18);\n"
+    "    vec3 zen   = vec3(0.02, 0.03, 0.09);\n"
+    "    col = mix(horiz, zen, smoothstep(0.0, 0.72, y));\n"
+    "    float aur = sin(az * 3.0 + uTime * 0.35 + fbm(dome * 1.5) * 4.0) * 0.5 + 0.5;\n"
+    "    col += mix(vec3(0.08, 0.46, 0.38), vec3(0.46, 0.34, 0.12), aur) * pow(aur, 3.0) * smoothstep(0.08, 0.45, y) * (1.0 - smoothstep(0.45, 0.85, y)) * 0.55;\n"
+    "    if (y > 0.02) {\n"
+    "      vec2 sp = vec2(az * 96.0, y * 120.0);\n"
+    "      vec2 sg = floor(sp);\n"
+    "      vec2 sf = fract(sp) - 0.5;\n"
+    "      float st = hash21(sg);\n"
+    "      if (st > 0.960) {\n"
+    "        float dotS = smoothstep(0.18, 0.02, length(sf));\n"
+    "        col += vec3(1.0, 0.96, 0.84) * dotS * (0.6 + 0.4 * sin(uTime * 3.0 + st * 80.0));\n"
+    "      }\n"
+    "    }\n"
+    "  }\n"
+    "  FragColor = vec4(col, 1.0);\n"
+    "}\n";
 
 static const char *kShadowVS =
     GLSL_HEADER
@@ -47,7 +240,8 @@ static const char *kWorldVS =
     "void main() {\n"
     "  vec4 wp = uModel * vec4(aPos, 1.0);\n"
     "  vWorldPos = wp.xyz;\n"
-    "  vNormal = normalize(mat3(uModel) * aNormal);\n"
+    "  mat3 nMat = transpose(inverse(mat3(uModel)));\n"
+    "  vNormal = normalize(nMat * aNormal);\n"
     "  vUV = aUV;\n"
     "  vColor = aColor;\n"
     "  vEmissive = aEmissive;\n"
@@ -65,46 +259,80 @@ static const char *kWorldFS =
     "in vec4 vShadowPos;\n"
     "uniform sampler2D uTex;\n"
     "uniform sampler2D uShadowMap;\n"
+    "uniform sampler2D uNormalMap;\n"
     "uniform vec3 uCamPos;\n"
     "uniform vec3 uSunDir;\n"
     "uniform vec3 uSunColor;\n"
-    "uniform vec3 uAmbient;\n"
+    "uniform vec3 uSkyAmbient;\n"
+    "uniform vec3 uGroundAmbient;\n"
     "uniform vec3 uFogColor;\n"
     "uniform float uFogDensity;\n"
     "uniform int uLightCount;\n"
     "uniform vec4 uLightPosRad[12];\n"
     "uniform vec4 uLightColInt[12];\n"
     "uniform int uUseTex;\n"
+    "uniform vec4 uTint;\n"
+    "uniform float uMeshEmissive;\n"
+    "uniform float uMeshGloss;\n"
     "out vec4 FragColor;\n"
-    "float sampleShadow(vec4 sp, float ndotl) {\n"
+    "float sampleShadow3x3(vec4 sp, float ndotl) {\n"
     "  vec3 proj = sp.xyz / max(sp.w, 0.0001);\n"
     "  proj = proj * 0.5 + 0.5;\n"
     "  if (proj.z > 1.0 || proj.x < 0.0 || proj.x > 1.0 || proj.y < 0.0 || proj.y > 1.0) return 1.0;\n"
-    "  float bias = max(0.004 * (1.0 - ndotl), 0.0018);\n"
-    "  float texel = 1.0 / 512.0;\n"
+    "  float bias = max(0.0032 * (1.0 - ndotl), 0.0014);\n"
+    "  float texel = 1.0 / 1024.0;\n"
     "  float lit = 0.0;\n"
-    "  for (int x = 0; x <= 1; ++x) {\n"
-    "    for (int y = 0; y <= 1; ++y) {\n"
-    "      float d = texture(uShadowMap, proj.xy + vec2(float(x)-0.5, float(y)-0.5) * texel).r;\n"
-    "      lit += (proj.z - bias <= d) ? 1.0 : 0.28;\n"
+    "  for (int x = -1; x <= 1; ++x) {\n"
+    "    for (int y = -1; y <= 1; ++y) {\n"
+    "      float d = texture(uShadowMap, proj.xy + vec2(float(x), float(y)) * texel).r;\n"
+    "      lit += (proj.z - bias <= d) ? 1.0 : 0.24;\n"
     "    }\n"
     "  }\n"
-    "  return lit * 0.25;\n"
+    "  return lit / 9.0;\n"
+    "}\n"
+    "vec3 acesTone(vec3 x) {\n"
+    "  return clamp((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14), 0.0, 1.0);\n"
     "}\n"
     "void main() {\n"
     "  vec4 baseCol = vColor;\n"
-    "  if (uUseTex == 1) {\n"
+    "  vec3 gN = normalize(vNormal);\n"
+    "  vec3 N = gN;\n"
+    "  float gloss = uMeshGloss;\n"
+    "  float em = vEmissive;\n"
+    "  if (uUseTex == 0) {\n"
+    "    baseCol *= uTint;\n"
+    "    em += uMeshEmissive;\n"
+    "  } else if (uUseTex == 1) {\n"
     "    vec4 texCol = texture(uTex, vUV);\n"
-    "    if (texCol.a < 0.30) discard;\n"
+    "    if (texCol.a < 0.35) discard;\n"
     "    baseCol *= texCol;\n"
+    "    gloss = 0.18;\n"
     "  } else if (uUseTex == 2) {\n"
     "    vec4 texCol = texture(uTex, vUV);\n"
     "    baseCol.rgb *= texCol.rgb;\n"
+    "    vec4 nm = texture(uNormalMap, vUV);\n"
+    "    vec3 tn = nm.xyz * 2.0 - 1.0;\n"
+    "    gloss = nm.a;\n"
+    "    vec3 T, B;\n"
+    "    if (abs(gN.y) < 0.5) {\n"
+    "      B = vec3(0.0, -1.0, 0.0);\n"
+    "      T = normalize(cross(gN, B));\n"
+    "    } else {\n"
+    "      T = vec3(1.0, 0.0, 0.0);\n"
+    "      B = vec3(0.0, 0.0, sign(gN.y));\n"
+    "    }\n"
+    "    N = normalize(T * tn.x + B * tn.y + gN * tn.z);\n"
     "  }\n"
-    "  vec3 N = normalize(vNormal);\n"
-    "  float ndotl = max(dot(N, normalize(uSunDir)), 0.0);\n"
-    "  float sh = sampleShadow(vShadowPos, ndotl);\n"
-    "  vec3 lighting = uAmbient + uSunColor * ndotl * sh;\n"
+    "  vec3 V = normalize(uCamPos - vWorldPos);\n"
+    "  vec3 Lsun = normalize(uSunDir);\n"
+    "  float gNdotL = max(dot(gN, Lsun), 0.0);\n"
+    "  float ndotl  = max(dot(N, Lsun), 0.0);\n"
+    "  float sh = sampleShadow3x3(vShadowPos, gNdotL);\n"
+    "  float hemi = N.y * 0.5 + 0.5;\n"
+    "  vec3 diffuseLight = mix(uGroundAmbient, uSkyAmbient, hemi) + uSunColor * ndotl * sh;\n"
+    "  float specPow = mix(10.0, 64.0, gloss);\n"
+    "  vec3 Hsun = normalize(Lsun + V);\n"
+    "  vec3 specLight = uSunColor * (pow(max(dot(N, Hsun), 0.0), specPow) * gloss * 0.85 * sh * step(0.01, gNdotL));\n"
     "  for (int i = 0; i < 12; ++i) {\n"
     "    if (i >= uLightCount) break;\n"
     "    vec3 toL = uLightPosRad[i].xyz - vWorldPos;\n"
@@ -112,16 +340,22 @@ static const char *kWorldFS =
     "    float rad = uLightPosRad[i].w;\n"
     "    if (dist < rad) {\n"
     "      float atten = 1.0 - (dist / rad);\n"
-    "      atten = floor(atten * atten * 12.0) / 12.0;\n"
-    "      float diff = max(dot(N, toL / max(dist, 0.001)), 0.28);\n"
-    "      lighting += uLightColInt[i].rgb * uLightColInt[i].w * diff * atten;\n"
+    "      atten = atten * atten;\n"
+    "      vec3 L = toL / max(dist, 0.001);\n"
+    "      float diff = max(dot(N, L), 0.0) * 0.82 + 0.18;\n"
+    "      vec3 lcol = uLightColInt[i].rgb * uLightColInt[i].w * atten;\n"
+    "      diffuseLight += lcol * diff;\n"
+    "      vec3 H = normalize(L + V);\n"
+    "      specLight += lcol * (pow(max(dot(N, H), 0.0), specPow) * gloss * 0.90);\n"
     "    }\n"
     "  }\n"
-    "  vec3 litRgb = baseCol.rgb * lighting + baseCol.rgb * vEmissive * 1.15;\n"
+    "  /* Subtle Fresnel rim sheen on glossy metals, glass & water */\n"
+    "  float fres = pow(1.0 - max(dot(N, V), 0.0), 3.0) * gloss * 0.22;\n"
+    "  vec3 litRgb = baseCol.rgb * diffuseLight + specLight + uSkyAmbient * fres + baseCol.rgb * em * 1.18;\n"
     "  float camDist = length(uCamPos - vWorldPos);\n"
     "  float fog = 1.0 - exp(-camDist * uFogDensity);\n"
-    "  vec3 finalRgb = mix(litRgb, uFogColor, clamp(fog, 0.0, 0.90));\n"
-    "  FragColor = vec4(finalRgb, baseCol.a);\n"
+    "  vec3 fogged = mix(litRgb, uFogColor, clamp(fog, 0.0, 0.88));\n"
+    "  FragColor = vec4(acesTone(fogged * 1.22), baseCol.a);\n"
     "}\n";
 
 static const char *kPostVS =
@@ -156,7 +390,11 @@ static const char *kPostFS =
     "}\n"
     "void main() {\n"
     "  vec3 col = texture(uScene, vUV).rgb;\n"
-    "  if (uDither == 1) {\n"
+    "  /* Gentle cinematic edge vignette */\n"
+    "  vec2 c = vUV * 2.0 - 1.0;\n"
+    "  col *= 1.0 - 0.10 * dot(c, c);\n"
+    "  /* Classic DOS 5-bit Bayer dithering only when playing in low-res <= 480w mode */\n"
+    "  if (uDither == 1 && max(uRetroSize.x, uRetroSize.y) <= 480.5) {\n"
     "    vec2 px = floor(vUV * uRetroSize);\n"
     "    float d = (bayer4(px) - 0.5) / 28.0;\n"
     "    col = floor(clamp(col + d, 0.0, 1.0) * 31.0 + 0.5) / 31.0;\n"
@@ -185,6 +423,15 @@ static const char *kHudFS =
     "  FragColor = vCol;\n"
     "}\n";
 
+static Mat4 mat4_rotate_z_local(float rad) {
+    Mat4 r = mat4_identity();
+    float c = cosf(rad);
+    float s = sinf(rad);
+    r.m[0] = c;  r.m[4] = -s;
+    r.m[1] = s;  r.m[5] = c;
+    return r;
+}
+
 static GLuint compile_shader(GLenum type, const char *src) {
     GLuint s = glCreateShader(type);
     glShaderSource(s, 1, &src, NULL);
@@ -192,7 +439,7 @@ static GLuint compile_shader(GLenum type, const char *src) {
     GLint ok = 0;
     glGetShaderiv(s, GL_COMPILE_STATUS, &ok);
     if (!ok) {
-        char log[512];
+        char log[1024];
         glGetShaderInfoLog(s, sizeof(log), NULL, log);
         fprintf(stderr, "Shader compile error: %s\n", log);
         glDeleteShader(s);
@@ -218,7 +465,7 @@ static GLuint link_program(const char *vs_src, const char *fs_src) {
     GLint ok = 0;
     glGetProgramiv(p, GL_LINK_STATUS, &ok);
     if (!ok) {
-        char log[512];
+        char log[1024];
         glGetProgramInfoLog(p, sizeof(log), NULL, log);
         fprintf(stderr, "Program link error: %s\n", log);
         glDeleteProgram(p);
@@ -227,397 +474,211 @@ static GLuint link_program(const char *vs_src, const char *fs_src) {
     return p;
 }
 
-static uint8_t clamp_u8(int v) { return (uint8_t)(v < 0 ? 0 : (v > 255 ? 255 : v)); }
-
-/* Procedural CC BY 4.0 512x64 (16x2 tiles of 32x32) retro pixel-art voxel texture atlas */
-static void create_voxel_texture_atlas(GlRenderer *r) {
-    const int TW = 32, TH = 32;
-    const int W = VOX_ATLAS_COLS * TW; /* 512 */
-    const int H = VOX_ATLAS_ROWS * TH; /* 64 */
-    uint8_t *px = (uint8_t *)calloc((size_t)(W * H * 4), 1);
-    if (!px) return;
-
-    for (int tile = 0; tile < VOX_TYPE_COUNT; ++tile) {
-        int tx = (tile % VOX_ATLAS_COLS) * TW;
-        int ty = (tile / VOX_ATLAS_COLS) * TH;
-        for (int y = 0; y < TH; ++y) {
-            for (int x = 0; x < TW; ++x) {
-                int h = ((x * 73 ^ y * 151 ^ tile * 37) & 31) - 16;
-                int cr = 160, cg = 160, cb = 160;
-                switch (tile) {
-                    case VOX_STONE: {
-                        bool seam = (y % 8 == 0) || ((x + (y / 8) * 8) % 16 == 0);
-                        int b = seam ? 72 : (116 + h);
-                        cr = b; cg = b + 2; cb = b + 8;
-                        break;
-                    }
-                    case VOX_WOOD: {
-                        int plank = (y % 8 == 0) ? -32 : (((x + y * 2) % 7 == 0) ? 10 : 0);
-                        cr = 128 + plank + h / 2; cg = 78 + plank + h / 3; cb = 42 + plank / 2;
-                        break;
-                    }
-                    case VOX_SNOW: {
-                        int sp = ((x * 19 + y * 37) % 17 == 0) ? 16 : 0;
-                        cr = 225 + sp; cg = 236 + sp; cb = 250;
-                        break;
-                    }
-                    case VOX_BRICK: {
-                        bool mortar = (y % 8 == 0) || ((x + (y / 8) * 8) % 16 == 0);
-                        if (mortar) { cr = 74; cg = 66; cb = 64; }
-                        else { cr = 152 + h; cg = 62 + h / 2; cb = 52 + h / 2; }
-                        break;
-                    }
-                    case VOX_CRACKED: {
-                        bool crack = (abs(x - y) <= 1 || abs(x + y - 31) <= 1 || abs(x - 16) <= 1) && (x > 3 && x < 28 && y > 3 && y < 28);
-                        if (crack) { cr = 28; cg = 16; cb = 14; }
-                        else if (abs(x - y) <= 2) { cr = 235; cg = 140; cb = 50; }
-                        else { cr = 164 + h; cg = 84 + h / 2; cb = 54; }
-                        break;
-                    }
-                    case VOX_NEON_PINK: {
-                        bool bar = (y % 4 == 0);
-                        cr = 255; cg = bar ? 160 : 50; cb = bar ? 235 : 195;
-                        break;
-                    }
-                    case VOX_NEON_CYAN: {
-                        bool bar = (y % 4 == 0);
-                        cr = bar ? 160 : 40; cg = 245; cb = 255;
-                        break;
-                    }
-                    case VOX_GOLD: {
-                        bool rim = (x < 3 || x > 28 || y < 3 || y > 28);
-                        cr = rim ? 210 : 255; cg = rim ? 165 : 225; cb = rim ? 40 : 85;
-                        break;
-                    }
-                    case VOX_LEAVES: {
-                        bool pine = ((x + y * 3) % 5 == 0);
-                        cr = pine ? 26 : 42 + h / 2; cg = pine ? 92 : 128 + h; cb = pine ? 38 : 56 + h / 2;
-                        break;
-                    }
-                    case VOX_FIRE: {
-                        int glow = (31 - y) * 4;
-                        cr = 255; cg = 100 + glow; cb = 20 + glow / 3;
-                        break;
-                    }
-                    case VOX_ASPHALT: {
-                        int g = 52 + h;
-                        cr = g; cg = g + 2; cb = g + 8;
-                        break;
-                    }
-                    case VOX_METAL: {
-                        bool rivet = ((x == 4 || x == 27) && (y == 4 || y == 27));
-                        bool border = (x == 0 || y == 0 || x == 31 || y == 31);
-                        int g = border ? 75 : (rivet ? 210 : 138 + h / 2);
-                        cr = g; cg = g + 8; cb = g + 16;
-                        break;
-                    }
-                    case VOX_PORTAL_FRAME: {
-                        bool rune = (x >= 12 && x <= 19 && (y % 6 < 2));
-                        cr = rune ? 130 : 78 + h / 2; cg = rune ? 150 : 74 + h / 2; cb = rune ? 225 : 104 + h / 2;
-                        break;
-                    }
-                    case VOX_CARPET: {
-                        bool pat = ((x + y) % 8 == 0 || (x - y + 32) % 8 == 0);
-                        cr = pat ? 195 : 148 + h / 2; cg = pat ? 58 : 28; cb = pat ? 42 : 34;
-                        break;
-                    }
-                    case VOX_CINEMA_STATIC: {
-                        int s = ((x * 97 ^ y * 211) & 1) ? 205 : 70;
-                        cr = s; cg = s; cb = s + 12;
-                        break;
-                    }
-                    case VOX_CINEMA_LIT: {
-                        bool frame = (x < 2 || x > 29 || y < 2 || y > 29);
-                        cr = frame ? 180 : 255; cg = frame ? 130 : 230; cb = frame ? 60 : 125;
-                        break;
-                    }
-                    case VOX_GLASS: {
-                        bool frame = (x < 2 || x > 29 || y < 2 || y > 29);
-                        bool sheen = ((x + y) % 12 == 0);
-                        cr = frame ? 85 : (sheen ? 235 : 155);
-                        cg = frame ? 115 : (sheen ? 250 : 225);
-                        cb = frame ? 140 : 255;
-                        break;
-                    }
-                    case VOX_MIRROR: {
-                        bool border = (x < 3 || x > 28 || y < 3 || y > 28);
-                        bool glint = (abs((x + y) - 24) <= 2 || abs((x + y) - 42) <= 1);
-                        cr = border ? 140 : (glint ? 255 : 165);
-                        cg = border ? 160 : (glint ? 255 : 238);
-                        cb = border ? 185 : 255;
-                        break;
-                    }
-                    case VOX_VENT: {
-                        bool slat = (y % 4 == 0);
-                        int g = slat ? 48 : 138;
-                        cr = g; cg = g + 6; cb = g + 12;
-                        break;
-                    }
-                    case VOX_HAZARD: {
-                        bool stripe = (((x + y) / 6) & 1) == 0;
-                        cr = stripe ? 238 : 34; cg = stripe ? 195 : 34; cb = stripe ? 28 : 38;
-                        break;
-                    }
-                    case VOX_CONCRETE: {
-                        bool tile_edge = (x == 0 || y == 0 || x == 16 || y == 16);
-                        int g = tile_edge ? 92 : 128 + h / 2;
-                        cr = g; cg = g + 2; cb = g + 4;
-                        break;
-                    }
-                    case VOX_ROAD_STRIPE: {
-                        bool dash = (x >= 13 && x <= 18 && y >= 6 && y <= 25);
-                        cr = dash ? 238 : 54 + h; cg = dash ? 198 : 56 + h; cb = dash ? 48 : 62 + h;
-                        break;
-                    }
-                    case VOX_DOOR_BLUE:
-                    case VOX_DOOR_RED:
-                    case VOX_DOOR_LOCKED: {
-                        bool frame = (x < 3 || x > 28 || y < 3 || y > 28);
-                        bool lock = (x >= 11 && x <= 20 && y >= 11 && y <= 20);
-                        int b = frame ? 60 : (lock ? 245 : 145);
-                        if (tile == VOX_DOOR_BLUE) { cr = b / 3; cg = b * 2 / 3; cb = b; }
-                        else if (tile == VOX_DOOR_RED) { cr = b; cg = b / 3; cb = b / 3; }
-                        else { cr = b; cg = b * 3 / 4; cb = b / 4; }
-                        break;
-                    }
-                    case VOX_SEAT: {
-                        bool stitch = (y == 12 || x == 2 || x == 29);
-                        cr = stitch ? 120 : 188; cg = stitch ? 24 : 38; cb = stitch ? 32 : 48;
-                        break;
-                    }
-                    case VOX_GIFT: {
-                        bool ribbon = (x >= 13 && x <= 18) || (y >= 13 && y <= 18);
-                        cr = ribbon ? 250 : 195; cg = ribbon ? 215 : 36; cb = ribbon ? 55 : 46;
-                        break;
-                    }
-                    case VOX_RELAY_CORE: {
-                        bool pulse = ((y / 4) & 1) == 0;
-                        cr = pulse ? 255 : 130; cg = pulse ? 55 : 22; cb = pulse ? 95 : 45;
-                        break;
-                    }
-                    case VOX_SANDSTONE: {
-                        bool seam = (y % 8 == 0) || ((x + (y / 8) * 10) % 16 == 0);
-                        bool glyph = (y >= 11 && y <= 20 && (x == 10 || x == 21 || y == 15));
-                        if (seam) { cr = 132; cg = 104; cb = 68; }
-                        else if (glyph) { cr = 165; cg = 132; cb = 78; }
-                        else { cr = 212 + h / 2; cg = 178 + h / 2; cb = 122 + h / 3; }
-                        break;
-                    }
-                    case VOX_WATER: {
-                        bool wave = (((x + y * 2) % 9) < 2);
-                        cr = wave ? 120 : 38; cg = wave ? 235 : 165 + h; cb = wave ? 255 : 225;
-                        break;
-                    }
-                    case VOX_LAVA: {
-                        bool vein = (((x * 3 + y * 5) ^ (x * y)) & 15) < 4;
-                        cr = 255; cg = vein ? 210 : 85 + h; cb = vein ? 65 : 14;
-                        break;
-                    }
-                    case VOX_SLIME: {
-                        bool bub = ((x - 10) * (x - 10) + (y - 12) * (y - 12) < 12) ||
-                                   ((x - 22) * (x - 22) + (y - 24) * (y - 24) < 9);
-                        cr = bub ? 165 : 42; cg = bub ? 255 : 195 + h; cb = bub ? 90 : 36;
-                        break;
-                    }
-                    case VOX_RUST_BRASS: {
-                        bool rivet = ((x == 3 || x == 28) && (y == 3 || y == 28));
-                        bool seam = (x == 0 || y == 0 || x == 16 || y == 16);
-                        int rust = ((x * 13 ^ y * 29) & 7) == 0 ? -24 : 0;
-                        if (seam) { cr = 64; cg = 44; cb = 28; }
-                        else if (rivet) { cr = 215; cg = 175; cb = 108; }
-                        else { cr = 138 + rust + h / 2; cg = 96 + rust / 2 + h / 3; cb = 54 + h / 4; }
-                        break;
-                    }
-                    case VOX_CRATE: {
-                        bool frame = (x < 4 || x > 27 || y < 4 || y > 27);
-                        bool brace = (abs(x - y) <= 2);
-                        int p = (frame || brace) ? 18 : 0;
-                        cr = 158 + p + h / 2; cg = 114 + p + h / 3; cb = 64 + p / 2;
-                        break;
-                    }
-                    case VOX_DOOR_YELLOW: {
-                        bool frame = (x < 3 || x > 28 || y < 3 || y > 28);
-                        bool lock = (x >= 11 && x <= 20 && y >= 11 && y <= 20);
-                        int b = frame ? 68 : (lock ? 255 : 185);
-                        cr = b; cg = (b * 9) / 10; cb = b / 5;
-                        break;
-                    }
-                    case VOX_RED_CARNIVAL: {
-                        bool red = ((x / 8) & 1) == 0;
-                        cr = red ? 198 + h / 2 : 228 + h / 3;
-                        cg = red ? 32 : 212 + h / 3;
-                        cb = red ? 38 : 184;
-                        break;
-                    }
-                    case VOX_CRYPT_STONE: {
-                        bool seam = (y % 8 == 0) || ((x + (y / 8) * 6) % 16 == 0);
-                        bool moss = (y > 22 && ((x * 7 + y) % 5 == 0));
-                        if (seam) { cr = 34; cg = 36; cb = 44; }
-                        else if (moss) { cr = 52; cg = 96; cb = 58; }
-                        else { cr = 74 + h / 2; cg = 72 + h / 2; cb = 86 + h / 2; }
-                        break;
-                    }
-                    case VOX_TECH_WALL: {
-                        bool rib = (x % 8 == 0) || (y == 0 || y == 31 || y == 15);
-                        bool led = (y >= 12 && y <= 14 && (x == 4 || x == 20));
-                        if (led) { cr = 50; cg = 235; cb = 95; }
-                        else if (rib) { cr = 64; cg = 70; cb = 78; }
-                        else { cr = 112 + h / 2; cg = 118 + h / 2; cb = 128 + h / 2; }
-                        break;
-                    }
-                    case VOX_PUSH_BLOCK: {
-                        bool rim = (x < 4 || x > 27 || y < 4 || y > 27);
-                        bool sun = ((x - 16) * (x - 16) + (y - 16) * (y - 16) < 42);
-                        if (sun) { cr = 248; cg = 205; cb = 65; }
-                        else if (rim) { cr = 148; cg = 112; cb = 52; }
-                        else { cr = 192 + h / 2; cg = 152 + h / 2; cb = 86; }
-                        break;
-                    }
-                    case VOX_SPIKES: {
-                        bool tip = (x % 8 >= 3 && x % 8 <= 5 && y < 20);
-                        cr = tip ? (y < 6 ? 220 : 180) : 45;
-                        cg = tip ? (y < 6 ? 35 : 185) : 48;
-                        cb = tip ? (y < 6 ? 35 : 195) : 54;
-                        break;
-                    }
-                    case VOX_SLIPGATE: {
-                        int dx = x - 16, dy = y - 16;
-                        int ring = ((dx * dx + dy * dy) / 14) & 1;
-                        cr = ring ? 185 : 112; cg = ring ? 82 : 42; cb = ring ? 255 : 215;
-                        break;
-                    }
-                    default: break;
-                }
-                int idx = ((ty + y) * W + (tx + x)) * 4;
-                px[idx + 0] = clamp_u8(cr);
-                px[idx + 1] = clamp_u8(cg);
-                px[idx + 2] = clamp_u8(cb);
-                px[idx + 3] = 255;
-            }
-        }
-    }
-
-    glGenTextures(1, &r->voxel_atlas_tex);
-    glBindTexture(GL_TEXTURE_2D, r->voxel_atlas_tex);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, W, H, 0, GL_RGBA, GL_UNSIGNED_BYTE, px);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-    free(px);
+static void bind_voxel_vertex_layout(void) {
+    glEnableVertexAttribArray(0); glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(VoxelVertex), (void *)0);
+    glEnableVertexAttribArray(1); glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, sizeof(VoxelVertex), (void *)(3 * sizeof(float)));
+    glEnableVertexAttribArray(2); glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, sizeof(VoxelVertex), (void *)(6 * sizeof(float)));
+    glEnableVertexAttribArray(3); glVertexAttribPointer(3, 4, GL_FLOAT, GL_FALSE, sizeof(VoxelVertex), (void *)(8 * sizeof(float)));
+    glEnableVertexAttribArray(4); glVertexAttribPointer(4, 1, GL_FLOAT, GL_FALSE, sizeof(VoxelVertex), (void *)(12 * sizeof(float)));
 }
 
-/* Procedural CC BY 4.0 retro 16x16 pixel-art sprite atlas (12 tiles wide = 192x16)
- * 0: Alien Trooper | 1: Pig-Guard | 2: Holo-Decoy | 3: Medkit
- * 4: Orb/Pickup    | 5: Fire/Boom | 6: Golden Shard | 7: Portal Swirl
- * 8: Octabrain     | 9: Turret    | 10: Keycard     | 11: Shotgun
- */
-static void create_procedural_sprite_atlas(GlRenderer *r) {
-    const int W = SPRITE_TILES * 16, H = 16;
-    uint8_t px[SPRITE_TILES * 16 * 16 * 4];
-    memset(px, 0, sizeof(px));
+static VoxelVertex make_mesh_vert(float px, float py, float pz, float nx, float ny, float nz, float u, float v) {
+    VoxelVertex vv;
+    vv.pos[0] = px; vv.pos[1] = py; vv.pos[2] = pz;
+    vv.normal[0] = nx; vv.normal[1] = ny; vv.normal[2] = nz;
+    vv.uv[0] = u; vv.uv[1] = v;
+    vv.color[0] = 1.0f; vv.color[1] = 1.0f; vv.color[2] = 1.0f; vv.color[3] = 1.0f;
+    vv.emissive = 0.0f;
+    return vv;
+}
 
-    for (int tile = 0; tile < SPRITE_TILES; ++tile) {
-        for (int y = 0; y < 16; ++y) {
-            for (int x = 0; x < 16; ++x) {
-                float u = ((float)x + 0.5f) / 16.0f - 0.5f;
-                float v = ((float)y + 0.5f) / 16.0f - 0.5f;
-                float d = sqrtf(u * u + v * v);
-                uint8_t cr = 0, cg = 0, cb = 0, ca = 0;
+static void upload_static_mesh(MeshGpu *dst, const VoxelVertex *verts, int count) {
+    glGenVertexArrays(1, &dst->vao);
+    glGenBuffers(1, &dst->vbo);
+    glBindVertexArray(dst->vao);
+    glBindBuffer(GL_ARRAY_BUFFER, dst->vbo);
+    glBufferData(GL_ARRAY_BUFFER, (GLsizeiptr)((size_t)count * sizeof(VoxelVertex)), verts, GL_STATIC_DRAW);
+    bind_voxel_vertex_layout();
+    glBindVertexArray(0);
+    dst->vert_count = count;
+}
 
-                if (tile == 0) { /* Alien Trooper */
-                    if ((y >= 1 && y <= 4 && x >= 5 && x <= 10) ||
-                        (y >= 5 && y <= 11 && x >= 4 && x <= 11) ||
-                        (y >= 12 && y <= 15 && ((x >= 4 && x <= 6) || (x >= 9 && x <= 11)))) {
-                        cr = 75; cg = 215; cb = 95; ca = 255;
-                        if (y == 2 && (x == 6 || x == 9)) { cr = 255; cg = 40; cb = 40; }
-                        if (y >= 6 && y <= 9 && x >= 6 && x <= 9) { cr = 185; cg = 45; cb = 70; }
-                    }
-                } else if (tile == 1) { /* Boar-Cop Enforcer */
-                    if ((y >= 1 && y <= 5 && x >= 4 && x <= 11) ||
-                        (y >= 6 && y <= 12 && x >= 3 && x <= 12) ||
-                        (y >= 13 && y <= 15 && ((x >= 3 && x <= 6) || (x >= 9 && x <= 12)))) {
-                        cr = 215; cg = 138; cb = 142; ca = 255;
-                        if (y >= 6 && y <= 11) { cr = 58; cg = 82; cb = 165; }
-                        if (y == 3 && (x == 6 || x == 9)) { cr = 255; cg = 235; cb = 55; }
-                    }
-                } else if (tile == 2) { /* Holo-Decoy */
-                    if (((y >= 2 && y <= 14 && x >= 5 && x <= 10) || (y >= 5 && y <= 9 && x >= 3 && x <= 12)) && (y % 2 == 0)) {
-                        cr = 70; cg = 240; cb = 255; ca = 225;
-                    }
-                } else if (tile == 3) { /* Medkit */
-                    if (x >= 2 && x <= 13 && y >= 3 && y <= 12) {
-                        cr = 238; cg = 238; cb = 244; ca = 255;
-                        if ((x >= 7 && x <= 8 && y >= 5 && y <= 10) || (y >= 7 && y <= 8 && x >= 5 && x <= 10)) {
-                            cr = 225; cg = 32; cb = 42;
-                        }
-                    }
-                } else if (tile == 4) { /* Glowing Orb / Pickup */
-                    if (d < 0.42f) {
-                        float glow = 1.0f - d / 0.42f;
-                        cr = (uint8_t)(120 + 135 * glow);
-                        cg = (uint8_t)(220 + 35 * glow);
-                        cb = (uint8_t)(120 + 135 * glow);
-                        ca = 255;
-                    }
-                } else if (tile == 5) { /* Fire / Explosion */
-                    if (d < 0.46f) {
-                        float t = 1.0f - d / 0.46f;
-                        cr = 255; cg = (uint8_t)(80 + 170 * t); cb = (uint8_t)(20 + 100 * t * t); ca = 255;
-                    }
-                } else if (tile == 6) { /* Golden Shades / Memory Shard */
-                    if (fabsf(u) + fabsf(v) < 0.44f) {
-                        cr = 255; cg = 218; cb = 55; ca = 255;
-                        if (y == 7 && x >= 5 && x <= 10) { cr = 35; cg = 22; cb = 42; }
-                    }
-                } else if (tile == 7) { /* Portal Swirl */
-                    if (d < 0.48f) {
-                        float ang = atan2f(v, u) + d * 10.0f;
-                        float sw = 0.5f + 0.5f * sinf(ang * 3.0f);
-                        cr = (uint8_t)(150 + 105 * sw); cg = (uint8_t)(170 + 85 * sw); cb = 255;
-                        ca = (uint8_t)(220 * (1.0f - d * 1.4f));
-                    }
-                } else if (tile == 8) { /* Floating Octabrain */
-                    bool dome = (y >= 2 && y <= 9 && x >= 3 && x <= 12 && d < 0.45f);
-                    bool tent = (y >= 10 && y <= 15 && (x == 4 || x == 7 || x == 9 || x == 12));
-                    if (dome || tent) {
-                        cr = 175; cg = 72; cb = 215; ca = 255;
-                        if (y == 5 && (x == 5 || x == 8 || x == 10)) { cr = 255; cg = 235; cb = 50; }
-                    }
-                } else if (tile == 9) { /* Automated Laser Turret */
-                    if ((y >= 4 && y <= 10 && x >= 4 && x <= 11) || (y >= 11 && y <= 15 && x >= 6 && x <= 9)) {
-                        cr = 145; cg = 155; cb = 170; ca = 255;
-                        if (y >= 6 && y <= 8 && x >= 6 && x <= 9) { cr = 255; cg = 40; cb = 45; }
-                    }
-                } else if (tile == 10) { /* Keycard */
-                    if (x >= 3 && x <= 12 && y >= 4 && y <= 12) {
-                        cr = 245; cg = 245; cb = 255; ca = 255;
-                        if (y == 6 || y == 7) { cr = 35; cg = 35; cb = 50; }
-                    }
-                } else if (tile == 11) { /* Shotgun Pickup */
-                    if ((y >= 7 && y <= 9 && x >= 2 && x <= 13) || (y >= 10 && y <= 11 && x >= 2 && x <= 5)) {
-                        cr = (x <= 5) ? 155 : 195; cg = (x <= 5) ? 95 : 205; cb = (x <= 5) ? 45 : 220; ca = 255;
-                    }
-                }
+static void init_mesh_library(GlRenderer *r) {
+    /* 1. Unit Box [-0.5..0.5] */
+    static const float c[36][8] = {
+        {-0.5f,-0.5f, 0.5f, 0,0,1, 0,0}, { 0.5f,-0.5f, 0.5f, 0,0,1, 1,0}, { 0.5f, 0.5f, 0.5f, 0,0,1, 1,1},
+        {-0.5f,-0.5f, 0.5f, 0,0,1, 0,0}, { 0.5f, 0.5f, 0.5f, 0,0,1, 1,1}, {-0.5f, 0.5f, 0.5f, 0,0,1, 0,1},
+        { 0.5f,-0.5f,-0.5f, 0,0,-1, 0,0}, {-0.5f,-0.5f,-0.5f, 0,0,-1, 1,0}, {-0.5f, 0.5f,-0.5f, 0,0,-1, 1,1},
+        { 0.5f,-0.5f,-0.5f, 0,0,-1, 0,0}, {-0.5f, 0.5f,-0.5f, 0,0,-1, 1,1}, { 0.5f, 0.5f,-0.5f, 0,0,-1, 0,1},
+        { 0.5f,-0.5f, 0.5f, 1,0,0, 0,0}, { 0.5f,-0.5f,-0.5f, 1,0,0, 1,0}, { 0.5f, 0.5f,-0.5f, 1,0,0, 1,1},
+        { 0.5f,-0.5f, 0.5f, 1,0,0, 0,0}, { 0.5f, 0.5f,-0.5f, 1,0,0, 1,1}, { 0.5f, 0.5f, 0.5f, 1,0,0, 0,1},
+        {-0.5f,-0.5f,-0.5f,-1,0,0, 0,0}, {-0.5f,-0.5f, 0.5f,-1,0,0, 1,0}, {-0.5f, 0.5f, 0.5f,-1,0,0, 1,1},
+        {-0.5f,-0.5f,-0.5f,-1,0,0, 0,0}, {-0.5f, 0.5f, 0.5f,-1,0,0, 1,1}, {-0.5f, 0.5f,-0.5f,-1,0,0, 0,1},
+        {-0.5f, 0.5f, 0.5f, 0,1,0, 0,0}, { 0.5f, 0.5f, 0.5f, 0,1,0, 1,0}, { 0.5f, 0.5f,-0.5f, 0,1,0, 1,1},
+        {-0.5f, 0.5f, 0.5f, 0,1,0, 0,0}, { 0.5f, 0.5f,-0.5f, 0,1,0, 1,1}, {-0.5f, 0.5f,-0.5f, 0,1,0, 0,1},
+        {-0.5f,-0.5f,-0.5f, 0,-1,0, 0,0}, { 0.5f,-0.5f,-0.5f, 0,-1,0, 1,0}, { 0.5f,-0.5f, 0.5f, 0,-1,0, 1,1},
+        {-0.5f,-0.5f,-0.5f, 0,-1,0, 0,0}, { 0.5f,-0.5f, 0.5f, 0,-1,0, 1,1}, {-0.5f,-0.5f, 0.5f, 0,-1,0, 0,1}
+    };
+    VoxelVertex box_v[36];
+    for (int i = 0; i < 36; ++i) {
+        box_v[i] = make_mesh_vert(c[i][0], c[i][1], c[i][2], c[i][3], c[i][4], c[i][5], c[i][6], c[i][7]);
+    }
+    upload_static_mesh(&r->mesh_box, box_v, 36);
 
-                int idx = (y * W + tile * 16 + x) * 4;
-                px[idx + 0] = cr; px[idx + 1] = cg; px[idx + 2] = cb; px[idx + 3] = ca;
-            }
+    /* 2. Smooth 16-sided Capped Cylinder (radius 0.5, height [-0.5..0.5] along Y) */
+    const int CSEG = 16;
+    VoxelVertex *cyl_v = (VoxelVertex *)calloc((size_t)(CSEG * 12), sizeof(VoxelVertex));
+    if (cyl_v) {
+        int ci = 0;
+        for (int i = 0; i < CSEG; ++i) {
+            float a0 = ((float)i / (float)CSEG) * 2.0f * SW_PI;
+            float a1 = ((float)(i + 1) / (float)CSEG) * 2.0f * SW_PI;
+            float c0 = cosf(a0), s0 = sinf(a0);
+            float c1 = cosf(a1), s1 = sinf(a1);
+            float x0 = c0 * 0.5f, z0 = s0 * 0.5f;
+            float x1 = c1 * 0.5f, z1 = s1 * 0.5f;
+            /* Side quad */
+            cyl_v[ci++] = make_mesh_vert(x0, -0.5f, z0, c0, 0, s0, 0, 0);
+            cyl_v[ci++] = make_mesh_vert(x1, -0.5f, z1, c1, 0, s1, 1, 0);
+            cyl_v[ci++] = make_mesh_vert(x1,  0.5f, z1, c1, 0, s1, 1, 1);
+            cyl_v[ci++] = make_mesh_vert(x0, -0.5f, z0, c0, 0, s0, 0, 0);
+            cyl_v[ci++] = make_mesh_vert(x1,  0.5f, z1, c1, 0, s1, 1, 1);
+            cyl_v[ci++] = make_mesh_vert(x0,  0.5f, z0, c0, 0, s0, 0, 1);
+            /* Top cap */
+            cyl_v[ci++] = make_mesh_vert(0,  0.5f, 0, 0, 1, 0, 0.5f, 0.5f);
+            cyl_v[ci++] = make_mesh_vert(x1, 0.5f, z1, 0, 1, 0, 1, 1);
+            cyl_v[ci++] = make_mesh_vert(x0, 0.5f, z0, 0, 1, 0, 0, 1);
+            /* Bottom cap */
+            cyl_v[ci++] = make_mesh_vert(0, -0.5f, 0, 0, -1, 0, 0.5f, 0.5f);
+            cyl_v[ci++] = make_mesh_vert(x0, -0.5f, z0, 0, -1, 0, 0, 0);
+            cyl_v[ci++] = make_mesh_vert(x1, -0.5f, z1, 0, -1, 0, 1, 0);
         }
+        upload_static_mesh(&r->mesh_cyl, cyl_v, ci);
+        free(cyl_v);
     }
 
-    glGenTextures(1, &r->sprite_atlas_tex);
-    glBindTexture(GL_TEXTURE_2D, r->sprite_atlas_tex);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, W, H, 0, GL_RGBA, GL_UNSIGNED_BYTE, px);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    /* 3. Smooth 14x10 UV Sphere (radius 0.5) */
+    const int SLICE = 14, STACK = 10;
+    VoxelVertex *sph_v = (VoxelVertex *)calloc((size_t)(SLICE * STACK * 6), sizeof(VoxelVertex));
+    if (sph_v) {
+        int si = 0;
+        for (int st = 0; st < STACK; ++st) {
+            float t0 = -SW_PI * 0.5f + ((float)st / (float)STACK) * SW_PI;
+            float t1 = -SW_PI * 0.5f + ((float)(st + 1) / (float)STACK) * SW_PI;
+            float ct0 = cosf(t0), st0 = sinf(t0);
+            float ct1 = cosf(t1), st1 = sinf(t1);
+            for (int sl = 0; sl < SLICE; ++sl) {
+                float p0 = ((float)sl / (float)SLICE) * 2.0f * SW_PI;
+                float p1 = ((float)(sl + 1) / (float)SLICE) * 2.0f * SW_PI;
+                float cp0 = cosf(p0), sp0 = sinf(p0);
+                float cp1 = cosf(p1), sp1 = sinf(p1);
+                float n00[3] = {ct0 * cp0, st0, ct0 * sp0};
+                float n10[3] = {ct0 * cp1, st0, ct0 * sp1};
+                float n11[3] = {ct1 * cp1, st1, ct1 * sp1};
+                float n01[3] = {ct1 * cp0, st1, ct1 * sp0};
+                sph_v[si++] = make_mesh_vert(n00[0]*0.5f, n00[1]*0.5f, n00[2]*0.5f, n00[0], n00[1], n00[2], 0, 0);
+                sph_v[si++] = make_mesh_vert(n10[0]*0.5f, n10[1]*0.5f, n10[2]*0.5f, n10[0], n10[1], n10[2], 1, 0);
+                sph_v[si++] = make_mesh_vert(n11[0]*0.5f, n11[1]*0.5f, n11[2]*0.5f, n11[0], n11[1], n11[2], 1, 1);
+                sph_v[si++] = make_mesh_vert(n00[0]*0.5f, n00[1]*0.5f, n00[2]*0.5f, n00[0], n00[1], n00[2], 0, 0);
+                sph_v[si++] = make_mesh_vert(n11[0]*0.5f, n11[1]*0.5f, n11[2]*0.5f, n11[0], n11[1], n11[2], 1, 1);
+                sph_v[si++] = make_mesh_vert(n01[0]*0.5f, n01[1]*0.5f, n01[2]*0.5f, n01[0], n01[1], n01[2], 0, 1);
+            }
+        }
+        upload_static_mesh(&r->mesh_sphere, sph_v, si);
+        free(sph_v);
+    }
 
+    /* 4. Smooth 14-sided Cone (base radius 0.5 at y=-0.5, apex at y=+0.5) */
+    const int KSEG = 14;
+    VoxelVertex *cone_v = (VoxelVertex *)calloc((size_t)(KSEG * 6), sizeof(VoxelVertex));
+    if (cone_v) {
+        int ki = 0;
+        for (int i = 0; i < KSEG; ++i) {
+            float a0 = ((float)i / (float)KSEG) * 2.0f * SW_PI;
+            float a1 = ((float)(i + 1) / (float)KSEG) * 2.0f * SW_PI;
+            float am = 0.5f * (a0 + a1);
+            float c0 = cosf(a0), s0 = sinf(a0);
+            float c1 = cosf(a1), s1 = sinf(a1);
+            float cm = cosf(am), sm = sinf(am);
+            cone_v[ki++] = make_mesh_vert(c0 * 0.5f, -0.5f, s0 * 0.5f, c0 * 0.894f, 0.447f, s0 * 0.894f, 0, 0);
+            cone_v[ki++] = make_mesh_vert(c1 * 0.5f, -0.5f, s1 * 0.5f, c1 * 0.894f, 0.447f, s1 * 0.894f, 1, 0);
+            cone_v[ki++] = make_mesh_vert(0.0f,       0.5f, 0.0f,      cm * 0.894f, 0.447f, sm * 0.894f, 0.5f, 1);
+            cone_v[ki++] = make_mesh_vert(0.0f,      -0.5f, 0.0f,      0, -1, 0, 0.5f, 0.5f);
+            cone_v[ki++] = make_mesh_vert(c1 * 0.5f, -0.5f, s1 * 0.5f, 0, -1, 0, 1, 0);
+            cone_v[ki++] = make_mesh_vert(c0 * 0.5f, -0.5f, s0 * 0.5f, 0, -1, 0, 0, 0);
+        }
+        upload_static_mesh(&r->mesh_cone, cone_v, ki);
+        free(cone_v);
+    }
+
+    /* 5. Dynamic 6-vertex Billboard Quad */
+    glGenVertexArrays(1, &r->bill_vao);
+    glGenBuffers(1, &r->bill_vbo);
+    glBindVertexArray(r->bill_vao);
+    glBindBuffer(GL_ARRAY_BUFFER, r->bill_vbo);
+    VoxelVertex dummy[6];
+    memset(dummy, 0, sizeof(dummy));
+    glBufferData(GL_ARRAY_BUFFER, sizeof(dummy), dummy, GL_DYNAMIC_DRAW);
+    bind_voxel_vertex_layout();
+    glBindVertexArray(0);
+}
+
+static void create_atlases(GlRenderer *r) {
+    /* 1. High-Detail 1024x192 (64x64 tiles) Diffuse + Tangent-Space Normal/Gloss Atlases */
+    uint8_t *vox_diff = NULL;
+    uint8_t *vox_norm = NULL;
+    int vw = 0, vh = 0;
+    retro_art_generate_voxel_atlases(&vox_diff, &vox_norm, &vw, &vh);
+    if (vox_diff && vox_norm) {
+        glGenTextures(1, &r->voxel_atlas_tex);
+        glBindTexture(GL_TEXTURE_2D, r->voxel_atlas_tex);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, vw, vh, 0, GL_RGBA, GL_UNSIGNED_BYTE, vox_diff);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+
+        glGenTextures(1, &r->voxel_normal_tex);
+        glBindTexture(GL_TEXTURE_2D, r->voxel_normal_tex);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, vw, vh, 0, GL_RGBA, GL_UNSIGNED_BYTE, vox_norm);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    }
+    free(vox_diff);
+    free(vox_norm);
+
+    /* 2. High-Detail 1280x128 (20x2 tiles of 64x64) Shaded & Outlined Animated Sprite Atlas */
+    uint8_t *spr = NULL;
+    int sw = 0, sh = 0;
+    retro_art_generate_sprite_atlas(&spr, &sw, &sh);
+    if (spr) {
+        glGenTextures(1, &r->sprite_atlas_tex);
+        glBindTexture(GL_TEXTURE_2D, r->sprite_atlas_tex);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, sw, sh, 0, GL_RGBA, GL_UNSIGNED_BYTE, spr);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    }
+    free(spr);
+
+    /* 3. 1x1 Utility Textures (white diffuse + flat normal) */
     uint8_t white[4] = {255, 255, 255, 255};
     glGenTextures(1, &r->white_tex);
     glBindTexture(GL_TEXTURE_2D, r->white_tex);
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, 1, 1, 0, GL_RGBA, GL_UNSIGNED_BYTE, white);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+
+    uint8_t flat_n[4] = {128, 128, 255, 64};
+    glGenTextures(1, &r->flat_normal_tex);
+    glBindTexture(GL_TEXTURE_2D, r->flat_normal_tex);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, 1, 1, 0, GL_RGBA, GL_UNSIGNED_BYTE, flat_n);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glBindTexture(GL_TEXTURE_2D, 0);
 }
 
 static void setup_retro_fbo(GlRenderer *r, int w, int h) {
@@ -631,11 +692,12 @@ static void setup_retro_fbo(GlRenderer *r, int w, int h) {
     glGenFramebuffers(1, &r->retro_fbo);
     glBindFramebuffer(GL_FRAMEBUFFER, r->retro_fbo);
 
+    GLenum filter = (w > 480 || h > 480) ? GL_LINEAR : GL_NEAREST;
     glGenTextures(1, &r->retro_color_tex);
     glBindTexture(GL_TEXTURE_2D, r->retro_color_tex);
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, filter);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, filter);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, r->retro_color_tex, 0);
@@ -678,26 +740,6 @@ static void setup_shadow_fbo(GlRenderer *r) {
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
 }
 
-static void bind_voxel_vertex_layout(void) {
-    glEnableVertexAttribArray(0); glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(VoxelVertex), (void *)0);
-    glEnableVertexAttribArray(1); glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, sizeof(VoxelVertex), (void *)(3 * sizeof(float)));
-    glEnableVertexAttribArray(2); glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, sizeof(VoxelVertex), (void *)(6 * sizeof(float)));
-    glEnableVertexAttribArray(3); glVertexAttribPointer(3, 4, GL_FLOAT, GL_FALSE, sizeof(VoxelVertex), (void *)(8 * sizeof(float)));
-    glEnableVertexAttribArray(4); glVertexAttribPointer(4, 1, GL_FLOAT, GL_FALSE, sizeof(VoxelVertex), (void *)(12 * sizeof(float)));
-}
-
-static void setup_unit_cube(GlRenderer *r) {
-    glGenVertexArrays(1, &r->cube_vao);
-    glGenBuffers(1, &r->cube_vbo);
-    glBindVertexArray(r->cube_vao);
-    glBindBuffer(GL_ARRAY_BUFFER, r->cube_vbo);
-    VoxelVertex dummy[36];
-    memset(dummy, 0, sizeof(dummy));
-    glBufferData(GL_ARRAY_BUFFER, sizeof(dummy), dummy, GL_DYNAMIC_DRAW);
-    bind_voxel_vertex_layout();
-    glBindVertexArray(0);
-}
-
 bool gl_renderer_init(GlRenderer *r, int retro_w, int retro_h) {
     if (!r) return false;
     memset(r, 0, sizeof(*r));
@@ -707,16 +749,17 @@ bool gl_renderer_init(GlRenderer *r, int retro_w, int retro_h) {
     }
 
     r->dither_enabled = true;
+    r->prog_sky    = link_program(kSkyVS,    kSkyFS);
     r->prog_shadow = link_program(kShadowVS, kShadowFS);
     r->prog_world  = link_program(kWorldVS,  kWorldFS);
     r->prog_post   = link_program(kPostVS,   kPostFS);
     r->prog_hud    = link_program(kHudVS,    kHudFS);
-    if (!r->prog_shadow || !r->prog_world || !r->prog_post || !r->prog_hud) {
+    if (!r->prog_sky || !r->prog_shadow || !r->prog_world || !r->prog_post || !r->prog_hud) {
         return false;
     }
 
     voxel_mesh_init(&r->scratch_mesh);
-    setup_unit_cube(r);
+    init_mesh_library(r);
 
     static const float quad_verts[6 * 4] = {
         -1,-1, 0,0,   1,-1, 1,0,   1, 1, 1,1,
@@ -739,10 +782,9 @@ bool gl_renderer_init(GlRenderer *r, int retro_w, int retro_h) {
     glEnableVertexAttribArray(1); glVertexAttribPointer(1, 4, GL_FLOAT, GL_FALSE, 6 * sizeof(float), (void *)(2 * sizeof(float)));
     glBindVertexArray(0);
 
-    create_voxel_texture_atlas(r);
-    create_procedural_sprite_atlas(r);
+    create_atlases(r);
     setup_shadow_fbo(r);
-    setup_retro_fbo(r, retro_w > 0 ? retro_w : 400, retro_h > 0 ? retro_h : 240);
+    setup_retro_fbo(r, retro_w > 0 ? retro_w : 640, retro_h > 0 ? retro_h : 360);
 
     r->initialized = true;
     return true;
@@ -755,6 +797,12 @@ void gl_renderer_set_retro_res(GlRenderer *r, int retro_w, int retro_h) {
     }
 }
 
+static void delete_mesh_gpu(MeshGpu *m) {
+    if (m->vao) glDeleteVertexArrays(1, &m->vao);
+    if (m->vbo) glDeleteBuffers(1, &m->vbo);
+    m->vao = 0; m->vbo = 0; m->vert_count = 0;
+}
+
 void gl_renderer_shutdown(GlRenderer *r) {
     if (!r || !r->initialized) return;
     voxel_mesh_free(&r->scratch_mesh);
@@ -765,6 +813,7 @@ void gl_renderer_shutdown(GlRenderer *r) {
             glDeleteBuffers(1, &r->chunks[i].ebo);
         }
     }
+    glDeleteProgram(r->prog_sky);
     glDeleteProgram(r->prog_shadow);
     glDeleteProgram(r->prog_world);
     glDeleteProgram(r->prog_post);
@@ -775,10 +824,16 @@ void gl_renderer_shutdown(GlRenderer *r) {
     glDeleteTextures(1, &r->retro_color_tex);
     glDeleteTextures(1, &r->retro_depth_tex);
     glDeleteTextures(1, &r->voxel_atlas_tex);
+    glDeleteTextures(1, &r->voxel_normal_tex);
     glDeleteTextures(1, &r->sprite_atlas_tex);
     glDeleteTextures(1, &r->white_tex);
-    glDeleteVertexArrays(1, &r->cube_vao);
-    glDeleteBuffers(1, &r->cube_vbo);
+    glDeleteTextures(1, &r->flat_normal_tex);
+    delete_mesh_gpu(&r->mesh_box);
+    delete_mesh_gpu(&r->mesh_cyl);
+    delete_mesh_gpu(&r->mesh_sphere);
+    delete_mesh_gpu(&r->mesh_cone);
+    glDeleteVertexArrays(1, &r->bill_vao);
+    glDeleteBuffers(1, &r->bill_vbo);
     glDeleteVertexArrays(1, &r->quad_vao);
     glDeleteBuffers(1, &r->quad_vbo);
     glDeleteVertexArrays(1, &r->hud_vao);
@@ -828,49 +883,38 @@ static void draw_all_chunks(const GlRenderer *r) {
     }
 }
 
-static void draw_colored_box(GlRenderer *r, GLuint prog, Mat4 model, float cr, float cg, float cb, float ca, float emissive) {
-    static const float c[36][8] = {
-        {-0.5f,-0.5f, 0.5f, 0,0,1, 0,0}, { 0.5f,-0.5f, 0.5f, 0,0,1, 1,0}, { 0.5f, 0.5f, 0.5f, 0,0,1, 1,1},
-        {-0.5f,-0.5f, 0.5f, 0,0,1, 0,0}, { 0.5f, 0.5f, 0.5f, 0,0,1, 1,1}, {-0.5f, 0.5f, 0.5f, 0,0,1, 0,1},
-        { 0.5f,-0.5f,-0.5f, 0,0,-1, 0,0}, {-0.5f,-0.5f,-0.5f, 0,0,-1, 1,0}, {-0.5f, 0.5f,-0.5f, 0,0,-1, 1,1},
-        { 0.5f,-0.5f,-0.5f, 0,0,-1, 0,0}, {-0.5f, 0.5f,-0.5f, 0,0,-1, 1,1}, { 0.5f, 0.5f,-0.5f, 0,0,-1, 0,1},
-        { 0.5f,-0.5f, 0.5f, 1,0,0, 0,0}, { 0.5f,-0.5f,-0.5f, 1,0,0, 1,0}, { 0.5f, 0.5f,-0.5f, 1,0,0, 1,1},
-        { 0.5f,-0.5f, 0.5f, 1,0,0, 0,0}, { 0.5f, 0.5f,-0.5f, 1,0,0, 1,1}, { 0.5f, 0.5f, 0.5f, 1,0,0, 0,1},
-        {-0.5f,-0.5f,-0.5f,-1,0,0, 0,0}, {-0.5f,-0.5f, 0.5f,-1,0,0, 1,0}, {-0.5f, 0.5f, 0.5f,-1,0,0, 1,1},
-        {-0.5f,-0.5f,-0.5f,-1,0,0, 0,0}, {-0.5f, 0.5f, 0.5f,-1,0,0, 1,1}, {-0.5f, 0.5f,-0.5f,-1,0,0, 0,1},
-        {-0.5f, 0.5f, 0.5f, 0,1,0, 0,0}, { 0.5f, 0.5f, 0.5f, 0,1,0, 1,0}, { 0.5f, 0.5f,-0.5f, 0,1,0, 1,1},
-        {-0.5f, 0.5f, 0.5f, 0,1,0, 0,0}, { 0.5f, 0.5f,-0.5f, 0,1,0, 1,1}, {-0.5f, 0.5f,-0.5f, 0,1,0, 0,1},
-        {-0.5f,-0.5f,-0.5f, 0,-1,0, 0,0}, { 0.5f,-0.5f,-0.5f, 0,-1,0, 1,0}, { 0.5f,-0.5f, 0.5f, 0,-1,0, 1,1},
-        {-0.5f,-0.5f,-0.5f, 0,-1,0, 0,0}, { 0.5f,-0.5f, 0.5f, 0,-1,0, 1,1}, {-0.5f,-0.5f, 0.5f, 0,-1,0, 0,1}
-    };
-    VoxelVertex verts[36];
-    for (int i = 0; i < 36; ++i) {
-        verts[i].pos[0] = c[i][0]; verts[i].pos[1] = c[i][1]; verts[i].pos[2] = c[i][2];
-        verts[i].normal[0] = c[i][3]; verts[i].normal[1] = c[i][4]; verts[i].normal[2] = c[i][5];
-        verts[i].uv[0] = c[i][6]; verts[i].uv[1] = c[i][7];
-        verts[i].color[0] = cr; verts[i].color[1] = cg; verts[i].color[2] = cb; verts[i].color[3] = ca;
-        verts[i].emissive = emissive;
-    }
-    glUniformMatrix4fv(glGetUniformLocation(prog, "uModel"), 1, GL_FALSE, model.m);
-    glUniform1i(glGetUniformLocation(prog, "uUseTex"), 0);
-    glBindVertexArray(r->cube_vao);
-    glBindBuffer(GL_ARRAY_BUFFER, r->cube_vbo);
-    glBufferData(GL_ARRAY_BUFFER, sizeof(verts), verts, GL_DYNAMIC_DRAW);
-    glDrawArrays(GL_TRIANGLES, 0, 36);
+/* Zero-upload sculpted 3D primitive draw using static MeshGpu VAOs */
+static void draw_mesh(GlRenderer *r, const MeshGpu *mesh, Mat4 model,
+                      float cr, float cg, float cb, float ca, float emissive, float gloss) {
+    glUniformMatrix4fv(glGetUniformLocation(r->prog_world, "uModel"), 1, GL_FALSE, model.m);
+    glUniform1i(glGetUniformLocation(r->prog_world, "uUseTex"), 0);
+    glUniform4f(glGetUniformLocation(r->prog_world, "uTint"), cr, cg, cb, ca);
+    glUniform1f(glGetUniformLocation(r->prog_world, "uMeshEmissive"), emissive);
+    glUniform1f(glGetUniformLocation(r->prog_world, "uMeshGloss"), gloss);
+    glBindVertexArray(mesh->vao);
+    glDrawArrays(GL_TRIANGLES, 0, mesh->vert_count);
 }
 
-static void draw_billboard_sprite(GlRenderer *r, Vec3 pos, float w, float h, int tile, float cam_yaw,
+/* 64x64 2-frame shaded & outlined billboard sprite draw */
+static void draw_billboard_sprite(GlRenderer *r, Vec3 pos, float w, float h, int col, int row, float cam_yaw,
                                   float cr, float cg, float cb, float emissive) {
-    float u0 = (float)tile / (float)SPRITE_TILES;
-    float u1 = (float)(tile + 1) / (float)SPRITE_TILES;
+    float du = 1.0f / (float)RETRO_SPRITE_COLS;
+    float dv = 1.0f / (float)RETRO_SPRITE_ROWS;
+    float pu = 0.5f / (float)(RETRO_SPRITE_COLS * RETRO_SPRITE_PX);
+    float pv = 0.5f / (float)(RETRO_SPRITE_ROWS * RETRO_SPRITE_PX);
+    float u0 = (float)col * du + pu;
+    float u1 = (float)(col + 1) * du - pu;
+    float v0 = (float)row * dv + pv;
+    float v1 = (float)(row + 1) * dv - pv;
+
     VoxelVertex v[6];
     const float q[6][4] = {
-        {-0.5f, 0.0f, u0, 1.0f}, { 0.5f, 0.0f, u1, 1.0f}, { 0.5f, 1.0f, u1, 0.0f},
-        {-0.5f, 0.0f, u0, 1.0f}, { 0.5f, 1.0f, u1, 0.0f}, {-0.5f, 1.0f, u0, 0.0f}
+        {-0.5f, 0.0f, u0, v1}, { 0.5f, 0.0f, u1, v1}, { 0.5f, 1.0f, u1, v0},
+        {-0.5f, 0.0f, u0, v1}, { 0.5f, 1.0f, u1, v0}, {-0.5f, 1.0f, u0, v0}
     };
     for (int i = 0; i < 6; ++i) {
         v[i].pos[0] = q[i][0] * w; v[i].pos[1] = q[i][1] * h; v[i].pos[2] = 0.0f;
-        v[i].normal[0] = 0.0f; v[i].normal[1] = 0.2f; v[i].normal[2] = 1.0f;
+        v[i].normal[0] = 0.0f; v[i].normal[1] = 0.35f; v[i].normal[2] = 0.94f;
         v[i].uv[0] = q[i][2]; v[i].uv[1] = q[i][3];
         v[i].color[0] = cr; v[i].color[1] = cg; v[i].color[2] = cb; v[i].color[3] = 1.0f;
         v[i].emissive = emissive;
@@ -880,13 +924,15 @@ static void draw_billboard_sprite(GlRenderer *r, Vec3 pos, float w, float h, int
     glUniform1i(glGetUniformLocation(r->prog_world, "uUseTex"), 1);
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, r->sprite_atlas_tex);
-    glBindVertexArray(r->cube_vao);
-    glBindBuffer(GL_ARRAY_BUFFER, r->cube_vbo);
+    glBindVertexArray(r->bill_vao);
+    glBindBuffer(GL_ARRAY_BUFFER, r->bill_vbo);
     glBufferData(GL_ARRAY_BUFFER, sizeof(v), v, GL_DYNAMIC_DRAW);
     glDrawArrays(GL_TRIANGLES, 0, 6);
 }
 
 static void unbind_all_textures(void) {
+    glActiveTexture(GL_TEXTURE2);
+    glBindTexture(GL_TEXTURE_2D, 0);
     glActiveTexture(GL_TEXTURE1);
     glBindTexture(GL_TEXTURE_2D, 0);
     glActiveTexture(GL_TEXTURE0);
@@ -894,13 +940,20 @@ static void unbind_all_textures(void) {
 }
 
 static Mat4 compute_light_vp(const GameWorld *w, Vec3 focus, Vec3 *out_sun_dir) {
-    Vec3 sun_dir = (w->scene == SCENE_DAY01)
-        ? vec3_norm(vec3_make(-0.42f, 0.86f, 0.36f))
-        : vec3_norm(vec3_make(0.35f, 0.90f, 0.40f));
+    Vec3 sun_dir;
+    switch (w->scene) {
+        case SCENE_DAY01: sun_dir = vec3_norm(vec3_make(-0.42f, 0.84f, 0.36f)); break;
+        case SCENE_DAY02: sun_dir = vec3_norm(vec3_make( 0.44f, 0.78f, -0.44f)); break;
+        case SCENE_DAY03: sun_dir = vec3_norm(vec3_make( 0.36f, 0.88f,  0.34f)); break;
+        case SCENE_DAY04: sun_dir = vec3_norm(vec3_make(-0.35f, 0.82f, -0.45f)); break;
+        case SCENE_DAY05: sun_dir = vec3_norm(vec3_make( 0.28f, 0.75f, -0.60f)); break;
+        case SCENE_DAY06: sun_dir = vec3_norm(vec3_make(-0.40f, 0.80f, -0.44f)); break;
+        default:          sun_dir = vec3_norm(vec3_make( 0.35f, 0.90f,  0.40f)); break;
+    }
     if (out_sun_dir) *out_sun_dir = sun_dir;
-    Vec3 eye = vec3_add(focus, vec3_scale(sun_dir, 34.0f));
+    Vec3 eye = vec3_add(focus, vec3_scale(sun_dir, 36.0f));
     Mat4 view = mat4_look_at(eye, focus, vec3_make(0, 1, 0));
-    Mat4 proj = mat4_ortho(-36.0f, 36.0f, -36.0f, 36.0f, 1.0f, 95.0f);
+    Mat4 proj = mat4_ortho(-36.0f, 36.0f, -36.0f, 36.0f, 1.0f, 96.0f);
     return mat4_mul(proj, view);
 }
 
@@ -921,14 +974,223 @@ static void render_shadow_pass(GlRenderer *r, const GameWorld *w, Mat4 light_vp)
     for (int i = 0; i < WORLD_MAX_ENEMIES; ++i) {
         const Enemy *e = &w->enemies[i];
         if (!e->active) continue;
-        float sc = (e->kind == ENEMY_BOSS_MECH) ? 1.9f : (e->shrunk_timer > 0.0f ? 0.35f : 0.9f);
-        Mat4 m = mat4_mul(mat4_translate(vec3_add(e->pos, vec3_make(0, sc * 0.6f, 0))),
-                          mat4_scale(vec3_make(sc * 0.7f, sc * 1.2f, sc * 0.7f)));
+        float sc = world_enemy_is_boss(e->kind) ? 2.0f : (e->shrunk_timer > 0.0f ? 0.35f : 0.95f);
+        Mat4 m = mat4_mul(mat4_translate(vec3_add(e->pos, vec3_make(0, sc * 0.75f, 0))),
+                          mat4_scale(vec3_make(sc * 0.85f, sc * 1.5f, sc * 0.85f)));
         glUniformMatrix4fv(glGetUniformLocation(r->prog_shadow, "uModel"), 1, GL_FALSE, m.m);
-        glBindVertexArray(r->cube_vao);
-        glDrawArrays(GL_TRIANGLES, 0, 36);
+        glBindVertexArray(r->mesh_cyl.vao);
+        glDrawArrays(GL_TRIANGLES, 0, r->mesh_cyl.vert_count);
     }
+
+    for (int i = 0; i < w->barrel_count; ++i) {
+        if (!w->barrels[i].active) continue;
+        Mat4 m = mat4_mul(mat4_translate(vec3_add(w->barrels[i].pos, vec3_make(0, 0.65f, 0))),
+                          mat4_scale(vec3_make(0.75f, 1.3f, 0.75f)));
+        glUniformMatrix4fv(glGetUniformLocation(r->prog_shadow, "uModel"), 1, GL_FALSE, m.m);
+        glBindVertexArray(r->mesh_cyl.vao);
+        glDrawArrays(GL_TRIANGLES, 0, r->mesh_cyl.vert_count);
+    }
+
+    for (int i = 0; i < w->boulder_count; ++i) {
+        if (!w->boulders[i].active) continue;
+        Mat4 m = mat4_mul(mat4_translate(w->boulders[i].pos), mat4_scale(vec3_make(2.4f, 2.4f, 2.4f)));
+        glUniformMatrix4fv(glGetUniformLocation(r->prog_shadow, "uModel"), 1, GL_FALSE, m.m);
+        glBindVertexArray(r->mesh_sphere.vao);
+        glDrawArrays(GL_TRIANGLES, 0, r->mesh_sphere.vert_count);
+    }
+
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
+}
+
+/* ============================================================================
+ * SCULPTED ARTICULATED 3D BOSSES (ALL 5 ACT I CLIMAX ENCOUNTERS)
+ * ============================================================================ */
+
+static void draw_boss_3d(GlRenderer *r, const GameWorld *w, const Enemy *e, float fl, float burn) {
+    float t = e->anim_time;
+    float bob = 0.08f * sinf(t * 5.0f);
+    float stride = sinf(t * 6.0f) * 0.25f;
+    float p3 = (w->boss_phase == 3) ? 0.30f : 0.0f;
+    float em = 0.14f + p3 + fl * 0.55f + burn * 0.55f;
+    Mat4 root = mat4_mul(mat4_translate(e->pos), mat4_rotate_y(-e->yaw));
+    Mat4 rx90 = mat4_rotate_x(SW_PI * 0.5f);
+
+    if (e->kind == ENEMY_BOSS_TREX) {
+        /* Day 2 Tomb Raider T-Rex: Horizontal tapered scaly body, snapping jaw, white teeth, wagging tail */
+        float gr = sw_clampf(0.26f + fl * 0.5f + burn * 0.5f, 0, 1);
+        float gg = sw_clampf(0.52f + fl * 0.3f, 0, 1);
+        float gb = sw_clampf(0.22f + fl * 0.3f, 0, 1);
+        /* Legs */
+        draw_mesh(r, &r->mesh_cyl, mat4_mul(root, mat4_mul(mat4_translate(vec3_make(-0.62f, 0.78f, stride)), mat4_scale(vec3_make(0.55f, 1.55f, 0.65f)))),
+                  gr * 0.85f, gg * 0.85f, gb * 0.85f, 1.0f, em * 0.6f, 0.35f);
+        draw_mesh(r, &r->mesh_cyl, mat4_mul(root, mat4_mul(mat4_translate(vec3_make( 0.62f, 0.78f, -stride)), mat4_scale(vec3_make(0.55f, 1.55f, 0.65f)))),
+                  gr * 0.85f, gg * 0.85f, gb * 0.85f, 1.0f, em * 0.6f, 0.35f);
+        /* Torso */
+        draw_mesh(r, &r->mesh_sphere, mat4_mul(root, mat4_mul(mat4_translate(vec3_make(0, 1.85f + bob, 0.0f)), mat4_scale(vec3_make(1.75f, 1.55f, 2.75f)))),
+                  gr, gg, gb, 1.0f, em, 0.40f);
+        /* Pale scaly underbelly */
+        draw_mesh(r, &r->mesh_sphere, mat4_mul(root, mat4_mul(mat4_translate(vec3_make(0, 1.48f + bob, 0.05f)), mat4_scale(vec3_make(1.30f, 0.85f, 2.15f)))),
+                  0.66f, 0.64f, 0.42f, 1.0f, em * 0.4f, 0.25f);
+        /* Sweeping wagging conical tail */
+        float wag = sinf(t * 4.2f) * 0.28f;
+        Mat4 tail_m = mat4_mul(root, mat4_mul(mat4_translate(vec3_make(wag * 0.6f, 1.75f + bob, -1.95f)),
+                      mat4_mul(mat4_rotate_y(wag), mat4_mul(mat4_rotate_x(-SW_PI * 0.46f), mat4_scale(vec3_make(1.05f, 2.65f, 1.05f))))));
+        draw_mesh(r, &r->mesh_cone, tail_m, gr * 0.9f, gg * 0.9f, gb * 0.9f, 1.0f, em * 0.6f, 0.35f);
+        /* Neck & Snapping Snout */
+        draw_mesh(r, &r->mesh_cyl, mat4_mul(root, mat4_mul(mat4_translate(vec3_make(0, 2.38f + bob, 1.15f)),
+                  mat4_mul(mat4_rotate_x(0.45f), mat4_scale(vec3_make(0.88f, 1.15f, 0.95f))))), gr, gg, gb, 1.0f, em, 0.40f);
+        draw_mesh(r, &r->mesh_box, mat4_mul(root, mat4_mul(mat4_translate(vec3_make(0, 2.85f + bob, 1.78f)), mat4_scale(vec3_make(1.05f, 0.55f, 1.38f)))),
+                  gr * 1.08f, gg * 1.05f, gb, 1.0f, em, 0.45f);
+        float jaw_open = 0.14f + 0.14f * fabsf(sinf(t * 4.5f));
+        draw_mesh(r, &r->mesh_box, mat4_mul(root, mat4_mul(mat4_translate(vec3_make(0, 2.42f + bob - jaw_open * 0.35f, 1.75f)),
+                  mat4_mul(mat4_rotate_x(jaw_open), mat4_scale(vec3_make(0.92f, 0.30f, 1.25f))))), 0.55f, 0.18f, 0.18f, 1.0f, em * 0.5f, 0.3f);
+        /* White conical predator teeth */
+        for (int k = -1; k <= 1; k += 2) {
+            draw_mesh(r, &r->mesh_cone, mat4_mul(root, mat4_mul(mat4_translate(vec3_make((float)k * 0.38f, 2.52f + bob, 2.22f)),
+                      mat4_mul(mat4_rotate_x(SW_PI), mat4_scale(vec3_make(0.14f, 0.28f, 0.14f))))), 0.96f, 0.95f, 0.88f, 1.0f, 0.15f, 0.7f);
+        }
+        /* Blazing golden eyes */
+        draw_mesh(r, &r->mesh_sphere, mat4_mul(root, mat4_mul(mat4_translate(vec3_make(-0.46f, 3.00f + bob, 1.65f)), mat4_scale(vec3_make(0.24f, 0.24f, 0.24f)))),
+                  1.0f, 0.90f, 0.18f, 1.0f, 1.15f, 0.9f);
+        draw_mesh(r, &r->mesh_sphere, mat4_mul(root, mat4_mul(mat4_translate(vec3_make( 0.46f, 3.00f + bob, 1.65f)), mat4_scale(vec3_make(0.24f, 0.24f, 0.24f)))),
+                  1.0f, 0.90f, 0.18f, 1.0f, 1.15f, 0.9f);
+    } else if (e->kind == ENEMY_BOSS_SHAMBLER) {
+        /* Day 4 Quake Shambler: Towering hunched white furred yeti with crackling cyan lightning hands */
+        float wr = sw_clampf(0.84f + fl * 0.16f + burn * 0.35f, 0, 1);
+        float wg = sw_clampf(0.82f + fl * 0.16f - burn * 0.25f, 0, 1);
+        float wb = sw_clampf(0.88f + fl * 0.12f - burn * 0.35f, 0, 1);
+        draw_mesh(r, &r->mesh_cyl, mat4_mul(root, mat4_mul(mat4_translate(vec3_make(-0.58f, 0.72f, stride)), mat4_scale(vec3_make(0.62f, 1.45f, 0.65f)))),
+                  wr * 0.85f, wg * 0.85f, wb * 0.88f, 1.0f, em * 0.5f, 0.15f);
+        draw_mesh(r, &r->mesh_cyl, mat4_mul(root, mat4_mul(mat4_translate(vec3_make( 0.58f, 0.72f, -stride)), mat4_scale(vec3_make(0.62f, 1.45f, 0.65f)))),
+                  wr * 0.85f, wg * 0.85f, wb * 0.88f, 1.0f, em * 0.5f, 0.15f);
+        /* Hunched muscular body & broad shoulders */
+        draw_mesh(r, &r->mesh_sphere, mat4_mul(root, mat4_mul(mat4_translate(vec3_make(0, 1.95f + bob, 0.0f)), mat4_scale(vec3_make(2.25f, 1.95f, 1.75f)))),
+                  wr, wg, wb, 1.0f, em, 0.18f);
+        draw_mesh(r, &r->mesh_sphere, mat4_mul(root, mat4_mul(mat4_translate(vec3_make(0, 2.75f + bob, 0.45f)), mat4_scale(vec3_make(1.22f, 1.08f, 1.15f)))),
+                  wr * 0.94f, wg * 0.92f, wb * 0.94f, 1.0f, em, 0.2f);
+        /* Terrifying bloody toothed maw (faceless!) */
+        draw_mesh(r, &r->mesh_sphere, mat4_mul(root, mat4_mul(mat4_translate(vec3_make(0, 2.58f + bob, 0.95f)), mat4_scale(vec3_make(0.75f, 0.44f, 0.42f)))),
+                  0.68f, 0.08f, 0.12f, 1.0f, 0.35f, 0.4f);
+        /* Swinging clawed arms + blazing blue-white lightning orbs */
+        for (int s = -1; s <= 1; s += 2) {
+            float arm_swing = sinf(t * 5.0f + (float)s) * 0.35f;
+            draw_mesh(r, &r->mesh_cyl, mat4_mul(root, mat4_mul(mat4_translate(vec3_make((float)s * 1.25f, 2.05f + bob, 0.45f)),
+                      mat4_mul(mat4_rotate_x(0.85f + arm_swing), mat4_scale(vec3_make(0.50f, 1.45f, 0.50f))))),
+                      wr * 0.92f, wg * 0.90f, wb * 0.94f, 1.0f, em * 0.6f, 0.18f);
+            float pulse = 0.45f + 0.16f * sinf(t * 14.0f + (float)s * 2.0f);
+            draw_mesh(r, &r->mesh_sphere, mat4_mul(root, mat4_mul(mat4_translate(vec3_make((float)s * 1.32f, 1.95f + bob, 1.18f)),
+                      mat4_scale(vec3_make(pulse, pulse, pulse)))), 0.38f, 0.92f, 1.0f, 0.95f, 1.35f, 0.95f);
+        }
+    } else if (e->kind == ENEMY_BOSS_MATRIARCH) {
+        /* Day 5 Blood Gargoyle Matriarch: Swept flapping demonic wings, curved horns, glowing crimson eyes */
+        float vr = sw_clampf(0.42f + fl * 0.5f + burn * 0.5f, 0, 1);
+        float vg = sw_clampf(0.24f + fl * 0.3f, 0, 1);
+        float vb = sw_clampf(0.48f + fl * 0.3f, 0, 1);
+        float flap = sinf(t * 6.5f) * 0.42f;
+        draw_mesh(r, &r->mesh_cyl, mat4_mul(root, mat4_mul(mat4_translate(vec3_make(0, 1.95f + bob * 1.8f, 0)), mat4_scale(vec3_make(1.25f, 1.65f, 0.95f)))),
+                  vr, vg, vb, 1.0f, em, 0.45f);
+        draw_mesh(r, &r->mesh_sphere, mat4_mul(root, mat4_mul(mat4_translate(vec3_make(0, 2.95f + bob * 1.8f, 0.15f)), mat4_scale(vec3_make(0.92f, 0.95f, 0.92f)))),
+                  vr * 1.1f, vg * 1.1f, vb * 1.1f, 1.0f, em, 0.50f);
+        for (int s = -1; s <= 1; s += 2) {
+            /* Curved horns */
+            draw_mesh(r, &r->mesh_cone, mat4_mul(root, mat4_mul(mat4_translate(vec3_make((float)s * 0.42f, 3.55f + bob * 1.8f, 0.05f)),
+                      mat4_mul(mat4_rotate_z_local(-(float)s * 0.48f), mat4_scale(vec3_make(0.26f, 0.85f, 0.26f))))),
+                      0.18f, 0.14f, 0.22f, 1.0f, 0.15f, 0.65f);
+            /* Swept Bat/Gargoyle Wings */
+            draw_mesh(r, &r->mesh_box, mat4_mul(root, mat4_mul(mat4_translate(vec3_make((float)s * 1.65f, 2.45f + bob * 1.8f + flap * 0.55f, -0.35f)),
+                      mat4_mul(mat4_rotate_z_local((float)s * (0.28f + flap)), mat4_scale(vec3_make(2.25f, 1.25f, 0.14f))))),
+                      0.58f, 0.12f, 0.24f, 1.0f, em * 0.9f, 0.35f);
+            /* Glowing blood eyes */
+            draw_mesh(r, &r->mesh_sphere, mat4_mul(root, mat4_mul(mat4_translate(vec3_make((float)s * 0.24f, 3.02f + bob * 1.8f, 0.56f)),
+                      mat4_scale(vec3_make(0.18f, 0.18f, 0.18f)))), 1.0f, 0.14f, 0.16f, 1.0f, 1.35f, 0.95f);
+        }
+    } else if (e->kind == ENEMY_BOSS_CYBERTITAN) {
+        /* Day 6 Doom Cyber-Titan: Muscular demon + chrome hydraulic piston leg + cylindrical Rocket Launcher arm + bull horns */
+        float fr = sw_clampf(0.76f + fl * 0.24f + burn * 0.2f, 0, 1);
+        float fg = sw_clampf(0.36f + fl * 0.4f, 0, 1);
+        float fb = sw_clampf(0.28f + fl * 0.4f, 0, 1);
+        /* Left organic leg & Right gleaming chrome cybernetic piston leg */
+        draw_mesh(r, &r->mesh_cyl, mat4_mul(root, mat4_mul(mat4_translate(vec3_make(-0.68f, 0.80f, stride)), mat4_scale(vec3_make(0.62f, 1.60f, 0.62f)))),
+                  fr * 0.85f, fg * 0.82f, fb * 0.80f, 1.0f, em * 0.5f, 0.30f);
+        draw_mesh(r, &r->mesh_cyl, mat4_mul(root, mat4_mul(mat4_translate(vec3_make( 0.68f, 0.80f, -stride)), mat4_scale(vec3_make(0.52f, 1.60f, 0.52f)))),
+                  0.78f, 0.82f, 0.88f, 1.0f, 0.15f, 0.92f);
+        draw_mesh(r, &r->mesh_sphere, mat4_mul(root, mat4_mul(mat4_translate(vec3_make( 0.68f, 0.85f, -stride)), mat4_scale(vec3_make(0.68f, 0.42f, 0.68f)))),
+                  0.85f, 0.65f, 0.26f, 1.0f, 0.20f, 0.85f);
+        /* Muscular torso & ribbed abdomen cables */
+        draw_mesh(r, &r->mesh_sphere, mat4_mul(root, mat4_mul(mat4_translate(vec3_make(0, 2.08f + bob, 0)), mat4_scale(vec3_make(2.15f, 1.75f, 1.50f)))),
+                  fr, fg, fb, 1.0f, em, 0.35f);
+        draw_mesh(r, &r->mesh_cyl, mat4_mul(root, mat4_mul(mat4_translate(vec3_make(0, 1.55f + bob, 0.42f)), mat4_scale(vec3_make(0.95f, 0.55f, 0.55f)))),
+                  0.32f, 0.34f, 0.38f, 1.0f, 0.15f, 0.85f);
+        /* Horned Bull Head */
+        draw_mesh(r, &r->mesh_sphere, mat4_mul(root, mat4_mul(mat4_translate(vec3_make(0, 3.10f + bob, 0.22f)), mat4_scale(vec3_make(1.05f, 1.02f, 1.05f)))),
+                  fr * 0.95f, fg * 0.90f, fb * 0.90f, 1.0f, em, 0.35f);
+        for (int s = -1; s <= 1; s += 2) {
+            draw_mesh(r, &r->mesh_cone, mat4_mul(root, mat4_mul(mat4_translate(vec3_make((float)s * 0.68f, 3.45f + bob, 0.10f)),
+                      mat4_mul(mat4_rotate_z_local(-(float)s * 0.85f), mat4_scale(vec3_make(0.32f, 1.05f, 0.32f))))),
+                      0.26f, 0.22f, 0.20f, 1.0f, 0.08f, 0.60f);
+            draw_mesh(r, &r->mesh_sphere, mat4_mul(root, mat4_mul(mat4_translate(vec3_make((float)s * 0.24f, 3.15f + bob, 0.68f)),
+                      mat4_scale(vec3_make(0.18f, 0.16f, 0.18f)))), 1.0f, 0.15f, 0.10f, 1.0f, 1.4f, 0.95f);
+        }
+        /* Massive Cybernetic Rocket Launcher Arm */
+        draw_mesh(r, &r->mesh_cyl, mat4_mul(root, mat4_mul(mat4_translate(vec3_make(-1.32f, 2.05f + bob, 0.72f)),
+                  mat4_mul(rx90, mat4_scale(vec3_make(0.60f, 1.85f, 0.60f))))), 0.46f, 0.48f, 0.54f, 1.0f, 0.18f, 0.90f);
+        draw_mesh(r, &r->mesh_sphere, mat4_mul(root, mat4_mul(mat4_translate(vec3_make(-1.32f, 2.05f + bob, 1.62f)),
+                  mat4_scale(vec3_make(0.46f, 0.46f, 0.28f)))), 1.0f, 0.42f, 0.12f, 1.0f, 1.2f, 0.8f);
+    } else {
+        /* Day 1 KRAMPUS-MECH: Armored festive crimson mech with shoulder missile pods, Krampus horns & glowing visor */
+        float mr = sw_clampf(0.80f + fl * 0.2f, 0, 1);
+        float mg = sw_clampf(0.15f + fl * 0.5f, 0, 1);
+        float mb = sw_clampf(0.20f + fl * 0.5f, 0, 1);
+        /* Armored piston legs */
+        for (int s = -1; s <= 1; s += 2) {
+            float st = (s < 0) ? stride : -stride;
+            draw_mesh(r, &r->mesh_cyl, mat4_mul(root, mat4_mul(mat4_translate(vec3_make((float)s * 0.68f, 0.75f, st)), mat4_scale(vec3_make(0.56f, 1.50f, 0.56f)))),
+                      0.38f, 0.42f, 0.48f, 1.0f, 0.10f, 0.85f);
+            draw_mesh(r, &r->mesh_sphere, mat4_mul(root, mat4_mul(mat4_translate(vec3_make((float)s * 0.68f, 0.78f, st + 0.12f)), mat4_scale(vec3_make(0.58f, 0.45f, 0.58f)))),
+                      0.85f, 0.68f, 0.22f, 1.0f, 0.18f, 0.85f);
+        }
+        /* Heavy cylindrical crimson chassis + gold trim */
+        draw_mesh(r, &r->mesh_cyl, mat4_mul(root, mat4_mul(mat4_translate(vec3_make(0, 1.98f + bob, 0)), mat4_scale(vec3_make(1.88f, 1.55f, 1.52f)))),
+                  mr, mg, mb, 1.0f, em, 0.75f);
+        draw_mesh(r, &r->mesh_sphere, mat4_mul(root, mat4_mul(mat4_translate(vec3_make(0, 2.86f + bob, 0.12f)), mat4_scale(vec3_make(1.12f, 0.92f, 1.12f)))),
+                  0.26f, 0.28f, 0.34f, 1.0f, 0.14f, 0.88f);
+        /* Glowing crimson visor */
+        draw_mesh(r, &r->mesh_box, mat4_mul(root, mat4_mul(mat4_translate(vec3_make(0, 2.88f + bob, 0.60f)), mat4_scale(vec3_make(0.86f, 0.24f, 0.24f)))),
+                  1.0f, 0.14f, 0.24f, 1.0f, 1.35f, 0.95f);
+        /* Dual Krampus horns & shoulder missile pods */
+        for (int s = -1; s <= 1; s += 2) {
+            draw_mesh(r, &r->mesh_cone, mat4_mul(root, mat4_mul(mat4_translate(vec3_make((float)s * 0.52f, 3.45f + bob, 0.05f)),
+                      mat4_mul(mat4_rotate_z_local(-(float)s * 0.55f), mat4_scale(vec3_make(0.28f, 0.92f, 0.28f))))),
+                      0.92f, 0.76f, 0.24f, 1.0f, 0.28f, 0.88f);
+            draw_mesh(r, &r->mesh_cyl, mat4_mul(root, mat4_mul(mat4_translate(vec3_make((float)s * 1.24f, 2.52f + bob, 0.25f)),
+                      mat4_mul(rx90, mat4_scale(vec3_make(0.56f, 1.35f, 0.56f))))), 0.34f, 0.38f, 0.45f, 1.0f, 0.16f, 0.88f);
+            draw_mesh(r, &r->mesh_sphere, mat4_mul(root, mat4_mul(mat4_translate(vec3_make((float)s * 1.24f, 2.52f + bob, 0.94f)),
+                      mat4_scale(vec3_make(0.42f, 0.42f, 0.22f)))), 1.0f, 0.28f, 0.14f, 1.0f, 1.10f, 0.85f);
+        }
+    }
+}
+
+/* ============================================================================
+ * SCULPTED MULTI-PART FIRST-PERSON WEAPON VIEWMODELS + GLOVED HANDS + FLASH
+ * ============================================================================ */
+
+static void draw_muzzle_star(GlRenderer *r, Vec3 tip, float scale, float cr, float cg, float cb) {
+    draw_mesh(r, &r->mesh_sphere, mat4_mul(mat4_translate(tip), mat4_scale(vec3_make(scale, scale, scale))),
+              cr, cg, cb, 0.95f, 1.6f, 0.1f);
+    for (int k = 0; k < 4; ++k) {
+        float ang = (float)k * (SW_PI * 0.25f);
+        Mat4 m = mat4_mul(mat4_translate(tip), mat4_mul(mat4_rotate_z_local(ang), mat4_scale(vec3_make(scale * 0.32f, scale * 2.1f, scale * 0.32f))));
+        draw_mesh(r, &r->mesh_cone, m, 1.0f, 0.95f, 0.72f, 0.88f, 1.5f, 0.1f);
+    }
+}
+
+static void draw_gloved_hand(GlRenderer *r, Vec3 pos) {
+    /* Tactical dark leather glove + wrist cuff */
+    draw_mesh(r, &r->mesh_sphere, mat4_mul(mat4_translate(pos), mat4_scale(vec3_make(0.095f, 0.088f, 0.115f))),
+              0.16f, 0.15f, 0.18f, 1.0f, 0.02f, 0.35f);
+    draw_mesh(r, &r->mesh_cyl, mat4_mul(mat4_translate(vec3_add(pos, vec3_make(0.02f, -0.04f, 0.11f))),
+              mat4_mul(mat4_rotate_x(1.30f), mat4_scale(vec3_make(0.088f, 0.18f, 0.088f)))),
+              0.22f, 0.24f, 0.28f, 1.0f, 0.02f, 0.25f);
 }
 
 static void draw_weapon_viewmodel(GlRenderer *r, const Player *p) {
@@ -938,215 +1200,415 @@ static void draw_weapon_viewmodel(GlRenderer *r, const Player *p) {
     glUniform3f(glGetUniformLocation(r->prog_world, "uCamPos"), 0.0f, 0.0f, 0.0f);
     glUniform1f(glGetUniformLocation(r->prog_world, "uFogDensity"), 0.0f);
     glUniform1i(glGetUniformLocation(r->prog_world, "uLightCount"), 0);
-    glUniform3f(glGetUniformLocation(r->prog_world, "uAmbient"), 0.52f, 0.54f, 0.62f);
+    glUniform3f(glGetUniformLocation(r->prog_world, "uSunDir"), 0.42f, 0.72f, 0.55f);
+    glUniform3f(glGetUniformLocation(r->prog_world, "uSunColor"), 0.98f, 0.95f, 0.90f);
+    glUniform3f(glGetUniformLocation(r->prog_world, "uSkyAmbient"), 0.48f, 0.52f, 0.62f);
+    glUniform3f(glGetUniformLocation(r->prog_world, "uGroundAmbient"), 0.24f, 0.22f, 0.25f);
 
-    float bob_x = sinf(p->walk_bob) * 0.016f;
-    float bob_y = fabsf(cosf(p->walk_bob)) * 0.014f;
-    float kick = (p->fire_cooldown > 0.0f) ? sw_clampf(p->fire_cooldown * 0.4f, 0.0f, 0.14f) : 0.0f;
-    float flash = p->muzzle_flash > 0.0f ? 0.95f : 0.22f;
+    float bob_x = sinf(p->walk_bob) * 0.015f;
+    float bob_y = fabsf(cosf(p->walk_bob)) * 0.013f;
+    float kick  = (p->fire_cooldown > 0.0f) ? sw_clampf(p->fire_cooldown * 0.35f, 0.0f, 0.12f) : 0.0f;
+    float pitch_kick = kick * 1.15f;
+    bool flaring = (p->muzzle_flash > 0.0f);
+    Mat4 rx90 = mat4_rotate_x(SW_PI * 0.5f);
 
-    /* Mighty Boot Stomp kick animation on left side! */
+    /* Mighty Boot Stomp kick animation on left side */
     if (p->stomp_flash > 0.0f) {
         float kt = p->stomp_flash / 0.32f;
-        Vec3 bpos = vec3_make(-0.18f, -0.35f + kt * 0.25f, -0.55f - kt * 0.12f);
-        draw_colored_box(r, r->prog_world, mat4_mul(mat4_translate(bpos), mat4_scale(vec3_make(0.18f, 0.15f, 0.36f))),
-                         0.28f, 0.18f, 0.12f, 1.0f, 0.1f);
+        Vec3 bpos = vec3_make(-0.18f, -0.34f + kt * 0.26f, -0.54f - kt * 0.14f);
+        draw_mesh(r, &r->mesh_box, mat4_mul(mat4_translate(bpos), mat4_scale(vec3_make(0.17f, 0.13f, 0.34f))),
+                  0.26f, 0.17f, 0.12f, 1.0f, 0.05f, 0.45f);
+        draw_mesh(r, &r->mesh_box, mat4_mul(mat4_translate(vec3_add(bpos, vec3_make(0, -0.07f, 0))),
+                  mat4_scale(vec3_make(0.18f, 0.04f, 0.36f))), 0.12f, 0.12f, 0.14f, 1.0f, 0.02f, 0.25f);
     }
 
-    Vec3 base = vec3_make(0.24f + bob_x, -0.24f - bob_y - kick * 0.25f, -0.50f + kick * 0.45f);
+    Vec3 base = vec3_make(0.22f + bob_x, -0.195f - bob_y - kick * 0.18f, -0.46f + kick * 0.40f);
+    Mat4 weap_root = mat4_mul(mat4_translate(base), mat4_rotate_x(pitch_kick));
+
     switch (p->weapon) {
         case WEAP_PISTOL:
         case WEAP_USP:
         case WEAP_DEAGLE:
         case WEAP_MAGNUM: {
-            float barrel_len = (p->weapon == WEAP_USP) ? 0.42f : 0.34f;
-            float cr = (p->weapon == WEAP_MAGNUM || p->weapon == WEAP_DEAGLE) ? 0.80f : 0.62f;
-            draw_colored_box(r, r->prog_world, mat4_mul(mat4_translate(base), mat4_scale(vec3_make(0.08f, 0.09f, barrel_len))),
-                             cr, cr + 0.03f, cr + 0.08f, 1.0f, flash);
-            draw_colored_box(r, r->prog_world, mat4_mul(mat4_translate(vec3_add(base, vec3_make(0, -0.08f, 0.08f))),
-                             mat4_scale(vec3_make(0.07f, 0.12f, 0.09f))), 0.22f, 0.22f, 0.25f, 1.0f, 0.08f);
+            bool chrome = (p->weapon == WEAP_MAGNUM || p->weapon == WEAP_DEAGLE);
+            bool silenced = (p->weapon == WEAP_USP);
+            float mr = chrome ? 0.82f : 0.48f;
+            float mg = chrome ? 0.85f : 0.52f;
+            float mb = chrome ? 0.90f : 0.58f;
+            /* Dark polymer/steel lower frame + contrasting machined upper slide */
+            draw_mesh(r, &r->mesh_box, mat4_mul(weap_root, mat4_mul(mat4_translate(vec3_make(0, -0.022f, 0.01f)),
+                      mat4_scale(vec3_make(0.062f, 0.036f, 0.27f)))), 0.18f, 0.20f, 0.24f, 1.0f, 0.02f, 0.55f);
+            draw_mesh(r, &r->mesh_box, mat4_mul(weap_root, mat4_mul(mat4_translate(vec3_make(0, 0.016f, 0.0f)),
+                      mat4_scale(vec3_make(0.066f, 0.048f, 0.29f)))), mr, mg, mb, 1.0f, 0.04f, 0.92f);
+            /* Dark ejection port & glowing green tritium iron sights */
+            draw_mesh(r, &r->mesh_box, mat4_mul(weap_root, mat4_mul(mat4_translate(vec3_make(0.022f, 0.038f, -0.03f)),
+                      mat4_scale(vec3_make(0.028f, 0.012f, 0.065f)))), 0.10f, 0.11f, 0.13f, 1.0f, 0.0f, 0.30f);
+            draw_mesh(r, &r->mesh_box, mat4_mul(weap_root, mat4_mul(mat4_translate(vec3_make(-0.018f, 0.046f, 0.12f)),
+                      mat4_scale(vec3_make(0.012f, 0.014f, 0.016f)))), 0.22f, 1.0f, 0.35f, 1.0f, 0.95f, 0.8f);
+            draw_mesh(r, &r->mesh_box, mat4_mul(weap_root, mat4_mul(mat4_translate(vec3_make( 0.018f, 0.046f, 0.12f)),
+                      mat4_scale(vec3_make(0.012f, 0.014f, 0.016f)))), 0.22f, 1.0f, 0.35f, 1.0f, 0.95f, 0.8f);
+            draw_mesh(r, &r->mesh_box, mat4_mul(weap_root, mat4_mul(mat4_translate(vec3_make( 0.0f,   0.048f, -0.13f)),
+                      mat4_scale(vec3_make(0.010f, 0.016f, 0.018f)))), 1.0f, 0.42f, 0.16f, 1.0f, 0.95f, 0.8f);
+            /* Cylindrical Barrel + Optional Ribbed USP Tactical Suppressor */
+            draw_mesh(r, &r->mesh_cyl, mat4_mul(weap_root, mat4_mul(mat4_translate(vec3_make(0, 0.016f, -0.16f)),
+                      mat4_mul(rx90, mat4_scale(vec3_make(0.034f, 0.13f, 0.034f))))), 0.22f, 0.24f, 0.28f, 1.0f, 0.03f, 0.92f);
+            if (silenced) {
+                draw_mesh(r, &r->mesh_cyl, mat4_mul(weap_root, mat4_mul(mat4_translate(vec3_make(0, 0.016f, -0.27f)),
+                          mat4_mul(rx90, mat4_scale(vec3_make(0.046f, 0.21f, 0.046f))))), 0.18f, 0.20f, 0.24f, 1.0f, 0.02f, 0.78f);
+                draw_mesh(r, &r->mesh_cyl, mat4_mul(weap_root, mat4_mul(mat4_translate(vec3_make(0, 0.016f, -0.19f)),
+                          mat4_mul(rx90, mat4_scale(vec3_make(0.052f, 0.024f, 0.052f))))), 0.42f, 0.44f, 0.48f, 1.0f, 0.03f, 0.92f);
+            }
+            /* Checkered Grip + Visible Tactical Gloved Hand */
+            draw_mesh(r, &r->mesh_box, mat4_mul(weap_root, mat4_mul(mat4_translate(vec3_make(0, -0.082f, 0.088f)),
+                      mat4_mul(mat4_rotate_x(-0.26f), mat4_scale(vec3_make(0.056f, 0.13f, 0.076f))))), 0.15f, 0.14f, 0.16f, 1.0f, 0.01f, 0.30f);
+            draw_gloved_hand(r, vec3_add(base, vec3_make(0.012f, -0.078f, 0.095f)));
+            if (flaring) draw_muzzle_star(r, vec3_add(base, vec3_make(0, 0.02f, silenced ? -0.39f : -0.24f)), 0.085f, 1.0f, 0.85f, 0.32f);
             break;
         }
         case WEAP_DUAL_PISTOLS: {
-            /* Iconic Lara twin chrome pistols! */
-            Vec3 left = vec3_make(-0.24f - bob_x, base.y, base.z);
-            draw_colored_box(r, r->prog_world, mat4_mul(mat4_translate(base), mat4_scale(vec3_make(0.07f, 0.08f, 0.32f))),
-                             0.76f, 0.78f, 0.84f, 1.0f, flash);
-            draw_colored_box(r, r->prog_world, mat4_mul(mat4_translate(left), mat4_scale(vec3_make(0.07f, 0.08f, 0.32f))),
-                             0.76f, 0.78f, 0.84f, 1.0f, flash);
+            /* Iconic Lara Croft twin brushed-chrome pistols with dark grips, sights & twin gloves! */
+            for (int side = -1; side <= 1; side += 2) {
+                Vec3 sp = vec3_make((float)side * (0.23f + bob_x), base.y, base.z);
+                Mat4 sr = mat4_mul(mat4_translate(sp), mat4_rotate_x(pitch_kick));
+                draw_mesh(r, &r->mesh_box, mat4_mul(sr, mat4_mul(mat4_translate(vec3_make(0, -0.020f, 0.01f)),
+                          mat4_scale(vec3_make(0.054f, 0.032f, 0.25f)))), 0.20f, 0.22f, 0.26f, 1.0f, 0.02f, 0.60f);
+                draw_mesh(r, &r->mesh_box, mat4_mul(sr, mat4_mul(mat4_translate(vec3_make(0, 0.014f, 0.0f)),
+                          mat4_scale(vec3_make(0.058f, 0.044f, 0.27f)))), 0.82f, 0.85f, 0.90f, 1.0f, 0.04f, 0.95f);
+                draw_mesh(r, &r->mesh_box, mat4_mul(sr, mat4_mul(mat4_translate(vec3_make(0, 0.042f, -0.11f)),
+                          mat4_scale(vec3_make(0.010f, 0.014f, 0.016f)))), 1.0f, 0.55f, 0.18f, 1.0f, 0.85f, 0.8f);
+                draw_mesh(r, &r->mesh_cyl, mat4_mul(sr, mat4_mul(mat4_translate(vec3_make(0, 0.014f, -0.15f)),
+                          mat4_mul(rx90, mat4_scale(vec3_make(0.030f, 0.11f, 0.030f))))), 0.24f, 0.26f, 0.30f, 1.0f, 0.04f, 0.92f);
+                draw_gloved_hand(r, vec3_add(sp, vec3_make(0, -0.072f, 0.085f)));
+                if (flaring) draw_muzzle_star(r, vec3_add(sp, vec3_make(0, 0.02f, -0.22f)), 0.075f, 1.0f, 0.88f, 0.40f);
+            }
             break;
         }
         case WEAP_FLARE: {
-            /* Glowing green magnesium flare stick */
-            draw_colored_box(r, r->prog_world, mat4_mul(mat4_translate(base), mat4_scale(vec3_make(0.05f, 0.05f, 0.28f))),
-                             0.25f, 0.72f, 0.35f, 1.0f, 0.4f);
-            draw_colored_box(r, r->prog_world, mat4_mul(mat4_translate(vec3_add(base, vec3_make(0, 0.01f, -0.15f))),
-                             mat4_scale(vec3_make(0.08f, 0.08f, 0.08f))), 0.35f, 1.0f, 0.45f, 1.0f, 1.2f);
+            draw_mesh(r, &r->mesh_cyl, mat4_mul(weap_root, mat4_mul(rx90, mat4_scale(vec3_make(0.045f, 0.26f, 0.045f)))),
+                      0.20f, 0.68f, 0.32f, 1.0f, 0.18f, 0.55f);
+            draw_muzzle_star(r, vec3_add(base, vec3_make(0, 0.01f, -0.15f)), 0.075f, 0.35f, 1.0f, 0.45f);
+            draw_gloved_hand(r, vec3_add(base, vec3_make(0, -0.03f, 0.06f)));
             break;
         }
         case WEAP_SHOTGUN:
         case WEAP_SUPER_SHOTGUN: {
-            float sc = (p->weapon == WEAP_SUPER_SHOTGUN) ? 1.25f : 1.0f;
-            draw_colored_box(r, r->prog_world, mat4_mul(mat4_translate(vec3_add(base, vec3_make(-0.03f * sc, 0.02f, -0.08f))),
-                             mat4_scale(vec3_make(0.048f * sc, 0.052f, 0.48f))), 0.55f, 0.58f, 0.64f, 1.0f, flash);
-            draw_colored_box(r, r->prog_world, mat4_mul(mat4_translate(vec3_add(base, vec3_make(0.03f * sc, 0.02f, -0.08f))),
-                             mat4_scale(vec3_make(0.048f * sc, 0.052f, 0.48f))), 0.55f, 0.58f, 0.64f, 1.0f, flash);
-            draw_colored_box(r, r->prog_world, mat4_mul(mat4_translate(vec3_add(base, vec3_make(0, -0.05f, 0.12f))),
-                             mat4_scale(vec3_make(0.11f, 0.09f, 0.22f))), 0.52f, 0.28f, 0.14f, 1.0f, 0.1f);
+            bool dbl = (p->weapon == WEAP_SUPER_SHOTGUN);
+            if (dbl) {
+                /* Iconic Doom II Double-Barreled Super Shotgun: twin blued steel barrels + brass bead + walnut forend + hammers */
+                for (int s = -1; s <= 1; s += 2) {
+                    draw_mesh(r, &r->mesh_cyl, mat4_mul(weap_root, mat4_mul(mat4_translate(vec3_make((float)s * 0.028f, 0.024f, -0.12f)),
+                              mat4_mul(rx90, mat4_scale(vec3_make(0.048f, 0.46f, 0.048f))))), 0.38f, 0.42f, 0.48f, 1.0f, 0.04f, 0.94f);
+                }
+                /* Center rib & brass bead front sight */
+                draw_mesh(r, &r->mesh_box, mat4_mul(weap_root, mat4_mul(mat4_translate(vec3_make(0, 0.045f, -0.12f)),
+                          mat4_scale(vec3_make(0.018f, 0.010f, 0.44f)))), 0.22f, 0.24f, 0.28f, 1.0f, 0.02f, 0.85f);
+                draw_mesh(r, &r->mesh_sphere, mat4_mul(weap_root, mat4_mul(mat4_translate(vec3_make(0, 0.056f, -0.33f)),
+                          mat4_scale(vec3_make(0.016f, 0.016f, 0.016f)))), 1.0f, 0.82f, 0.24f, 1.0f, 0.55f, 0.95f);
+                /* Walnut forend wood grip under twin barrels */
+                draw_mesh(r, &r->mesh_box, mat4_mul(weap_root, mat4_mul(mat4_translate(vec3_make(0, -0.014f, -0.04f)),
+                          mat4_scale(vec3_make(0.095f, 0.048f, 0.19f)))), 0.48f, 0.24f, 0.11f, 1.0f, 0.02f, 0.38f);
+                /* Twin brass hammers */
+                for (int s = -1; s <= 1; s += 2) {
+                    draw_mesh(r, &r->mesh_box, mat4_mul(weap_root, mat4_mul(mat4_translate(vec3_make((float)s * 0.032f, 0.055f, 0.13f)),
+                              mat4_mul(mat4_rotate_x(-0.45f), mat4_scale(vec3_make(0.016f, 0.036f, 0.022f))))), 0.78f, 0.62f, 0.26f, 1.0f, 0.06f, 0.90f);
+                }
+            } else {
+                /* Pump Shotgun: top cylindrical barrel + lower tubular magazine + wooden pump grip */
+                draw_mesh(r, &r->mesh_cyl, mat4_mul(weap_root, mat4_mul(mat4_translate(vec3_make(0, 0.032f, -0.13f)),
+                          mat4_mul(rx90, mat4_scale(vec3_make(0.044f, 0.52f, 0.044f))))), 0.46f, 0.50f, 0.56f, 1.0f, 0.04f, 0.94f);
+                draw_mesh(r, &r->mesh_sphere, mat4_mul(weap_root, mat4_mul(mat4_translate(vec3_make(0, 0.058f, -0.37f)),
+                          mat4_scale(vec3_make(0.015f, 0.015f, 0.015f)))), 1.0f, 0.80f, 0.22f, 1.0f, 0.55f, 0.95f);
+                draw_mesh(r, &r->mesh_cyl, mat4_mul(weap_root, mat4_mul(mat4_translate(vec3_make(0, -0.012f, -0.10f)),
+                          mat4_mul(rx90, mat4_scale(vec3_make(0.038f, 0.42f, 0.038f))))), 0.28f, 0.31f, 0.36f, 1.0f, 0.02f, 0.85f);
+                draw_mesh(r, &r->mesh_cyl, mat4_mul(weap_root, mat4_mul(mat4_translate(vec3_make(0, -0.018f, -0.14f + kick * 0.5f)),
+                          mat4_mul(rx90, mat4_scale(vec3_make(0.062f, 0.16f, 0.062f))))), 0.48f, 0.25f, 0.12f, 1.0f, 0.02f, 0.40f);
+            }
+            /* Engraved Breech Receiver & Hardwood Stock */
+            draw_mesh(r, &r->mesh_box, mat4_mul(weap_root, mat4_mul(mat4_translate(vec3_make(0, 0.008f, 0.11f)),
+                      mat4_scale(vec3_make(0.095f, 0.082f, 0.16f)))), 0.28f, 0.30f, 0.36f, 1.0f, 0.03f, 0.88f);
+            draw_mesh(r, &r->mesh_box, mat4_mul(weap_root, mat4_mul(mat4_translate(vec3_make(0, -0.045f, 0.22f)),
+                      mat4_mul(mat4_rotate_x(-0.18f), mat4_scale(vec3_make(0.075f, 0.095f, 0.20f))))), 0.48f, 0.24f, 0.11f, 1.0f, 0.02f, 0.38f);
+            draw_gloved_hand(r, vec3_add(base, vec3_make(0.01f, -0.055f, 0.14f)));
+            if (flaring) draw_muzzle_star(r, vec3_add(base, vec3_make(0, 0.03f, -0.39f)), dbl ? 0.14f : 0.11f, 1.0f, 0.78f, 0.24f);
             break;
         }
         case WEAP_CARBINE:
         case WEAP_SNIPER: {
-            float len = (p->weapon == WEAP_SNIPER) ? 0.62f : 0.46f;
-            draw_colored_box(r, r->prog_world, mat4_mul(mat4_translate(base), mat4_scale(vec3_make(0.08f, 0.10f, len))),
-                             0.26f, 0.30f, 0.28f, 1.0f, flash * 0.7f);
-            draw_colored_box(r, r->prog_world, mat4_mul(mat4_translate(vec3_add(base, vec3_make(0, 0.08f, -0.04f))),
-                             mat4_scale(vec3_make(0.05f, 0.05f, 0.22f))), 0.16f, 0.18f, 0.22f, 1.0f, 0.15f);
+            bool awp = (p->weapon == WEAP_SNIPER);
+            float blen = awp ? 0.62f : 0.46f;
+            draw_mesh(r, &r->mesh_box, mat4_mul(weap_root, mat4_scale(vec3_make(0.072f, 0.085f, 0.34f))),
+                      awp ? 0.24f : 0.22f, awp ? 0.34f : 0.24f, awp ? 0.22f : 0.28f, 1.0f, 0.02f, 0.62f);
+            draw_mesh(r, &r->mesh_cyl, mat4_mul(weap_root, mat4_mul(mat4_translate(vec3_make(0, 0.015f, -0.22f)),
+                      mat4_mul(rx90, mat4_scale(vec3_make(0.034f, blen, 0.034f))))), 0.32f, 0.34f, 0.38f, 1.0f, 0.03f, 0.90f);
+            /* Cylindrical Optical Scope on top! */
+            draw_mesh(r, &r->mesh_cyl, mat4_mul(weap_root, mat4_mul(mat4_translate(vec3_make(0, 0.088f, -0.02f)),
+                      mat4_mul(rx90, mat4_scale(vec3_make(0.048f, awp ? 0.28f : 0.16f, 0.048f))))), 0.18f, 0.20f, 0.24f, 1.0f, 0.04f, 0.88f);
+            draw_mesh(r, &r->mesh_sphere, mat4_mul(weap_root, mat4_mul(mat4_translate(vec3_make(0, 0.088f, awp ? 0.12f : 0.06f)),
+                      mat4_scale(vec3_make(0.044f, 0.044f, 0.015f)))), 0.22f, 0.78f, 1.0f, 1.0f, 0.45f, 0.98f);
+            draw_gloved_hand(r, vec3_add(base, vec3_make(0, -0.075f, 0.10f)));
+            if (flaring) draw_muzzle_star(r, vec3_add(base, vec3_make(0, 0.02f, -0.22f - blen * 0.52f)), 0.10f, 1.0f, 0.86f, 0.34f);
             break;
         }
         case WEAP_FLASH_SMOKE: {
-            draw_colored_box(r, r->prog_world, mat4_mul(mat4_translate(base), mat4_scale(vec3_make(0.09f, 0.15f, 0.09f))),
-                             0.65f, 0.72f, 0.68f, 1.0f, 0.25f);
-            draw_colored_box(r, r->prog_world, mat4_mul(mat4_translate(vec3_add(base, vec3_make(0, 0.08f, 0))),
-                             mat4_scale(vec3_make(0.05f, 0.04f, 0.05f))), 0.25f, 0.85f, 1.0f, 1.0f, 0.8f);
+            draw_mesh(r, &r->mesh_cyl, mat4_mul(weap_root, mat4_scale(vec3_make(0.085f, 0.16f, 0.085f))),
+                      0.62f, 0.70f, 0.66f, 1.0f, 0.05f, 0.75f);
+            draw_mesh(r, &r->mesh_cyl, mat4_mul(weap_root, mat4_mul(mat4_translate(vec3_make(0, 0.095f, 0)),
+                      mat4_scale(vec3_make(0.042f, 0.04f, 0.042f)))), 0.25f, 0.85f, 1.0f, 1.0f, 0.65f, 0.85f);
+            draw_gloved_hand(r, vec3_add(base, vec3_make(0, -0.04f, 0.04f)));
             break;
         }
         case WEAP_SHRINKER:
         case WEAP_BFG: {
-            float sc = (p->weapon == WEAP_BFG) ? 1.45f : 1.0f;
-            draw_colored_box(r, r->prog_world, mat4_mul(mat4_translate(base), mat4_scale(vec3_make(0.14f * sc, 0.12f * sc, 0.42f))),
-                             0.38f, 0.36f, 0.48f, 1.0f, 0.18f);
-            draw_colored_box(r, r->prog_world, mat4_mul(mat4_translate(vec3_add(base, vec3_make(0, 0.06f, -0.12f))),
-                             mat4_scale(vec3_make(0.10f * sc, 0.10f * sc, 0.16f))), 0.25f, 1.0f, 0.45f, 1.0f, 1.1f);
+            bool bfg = (p->weapon == WEAP_BFG);
+            float sc = bfg ? 1.35f : 1.0f;
+            /* Ribbed Alien/UAC Chassis + Glowing Emerald Plasma Core Sphere */
+            draw_mesh(r, &r->mesh_cyl, mat4_mul(weap_root, mat4_mul(rx90, mat4_scale(vec3_make(0.13f * sc, 0.44f, 0.13f * sc)))),
+                      bfg ? 0.44f : 0.56f, bfg ? 0.46f : 0.44f, bfg ? 0.52f : 0.32f, 1.0f, 0.05f, 0.82f);
+            draw_mesh(r, &r->mesh_sphere, mat4_mul(weap_root, mat4_mul(mat4_translate(vec3_make(0, 0.055f * sc, -0.10f)),
+                      mat4_scale(vec3_make(0.11f * sc, 0.11f * sc, 0.14f * sc)))), 0.22f, 1.0f, 0.42f, 1.0f, flaring ? 1.55f : 0.95f, 0.95f);
+            draw_gloved_hand(r, vec3_add(base, vec3_make(0, -0.08f, 0.12f)));
+            if (flaring) draw_muzzle_star(r, vec3_add(base, vec3_make(0, 0.02f, -0.28f)), 0.13f * sc, 0.32f, 1.0f, 0.48f);
             break;
         }
         case WEAP_NAILGUN:
         case WEAP_CHAINGUN: {
-            float cr = (p->weapon == WEAP_NAILGUN) ? 0.72f : 0.42f;
-            float cg = (p->weapon == WEAP_NAILGUN) ? 0.56f : 0.44f;
-            float cb = (p->weapon == WEAP_NAILGUN) ? 0.34f : 0.48f;
-            draw_colored_box(r, r->prog_world, mat4_mul(mat4_translate(vec3_add(base, vec3_make(-0.04f, 0, -0.06f))),
-                             mat4_scale(vec3_make(0.05f, 0.05f, 0.46f))), cr, cg, cb, 1.0f, flash);
-            draw_colored_box(r, r->prog_world, mat4_mul(mat4_translate(vec3_add(base, vec3_make(0.04f, 0, -0.06f))),
-                             mat4_scale(vec3_make(0.05f, 0.05f, 0.46f))), cr, cg, cb, 1.0f, flash);
+            bool cg = (p->weapon == WEAP_CHAINGUN);
+            float cr = cg ? 0.46f : 0.68f, cgr = cg ? 0.48f : 0.50f, cb = cg ? 0.54f : 0.28f;
+            int barrels = cg ? 4 : 2;
+            float spin = cg ? (p->walk_bob * 3.0f + (flaring ? 1.2f : 0.0f)) : 0.0f;
+            /* Heavy Cast-Iron Receiver Housing + Amber Riveted Magazine */
+            draw_mesh(r, &r->mesh_box, mat4_mul(weap_root, mat4_mul(mat4_translate(vec3_make(0, -0.01f, 0.08f)),
+                      mat4_scale(vec3_make(0.135f, 0.105f, 0.22f)))), 0.24f, 0.22f, 0.22f, 1.0f, 0.03f, 0.82f);
+            draw_mesh(r, &r->mesh_box, mat4_mul(weap_root, mat4_mul(mat4_translate(vec3_make(0, 0.052f, 0.08f)),
+                      mat4_scale(vec3_make(0.052f, 0.024f, 0.14f)))), 0.88f, 0.62f, 0.20f, 1.0f, 0.15f, 0.85f);
+            for (int b = 0; b < barrels; ++b) {
+                float ang = spin + ((float)b / (float)barrels) * 2.0f * SW_PI;
+                float ox = cosf(ang) * (cg ? 0.042f : 0.038f);
+                float oy = sinf(ang) * (cg ? 0.042f : 0.0f);
+                draw_mesh(r, &r->mesh_cyl, mat4_mul(weap_root, mat4_mul(mat4_translate(vec3_make(ox, oy, -0.13f)),
+                          mat4_mul(rx90, mat4_scale(vec3_make(0.032f, 0.44f, 0.032f))))), cr, cgr, cb, 1.0f, 0.04f, 0.92f);
+            }
+            draw_mesh(r, &r->mesh_cyl, mat4_mul(weap_root, mat4_mul(mat4_translate(vec3_make(0, 0, -0.25f)),
+                      mat4_mul(rx90, mat4_scale(vec3_make(0.115f, 0.042f, 0.115f))))), 0.26f, 0.28f, 0.34f, 1.0f, 0.04f, 0.88f);
+            draw_gloved_hand(r, vec3_add(base, vec3_make(0, -0.08f, 0.12f)));
+            if (flaring) draw_muzzle_star(r, vec3_add(base, vec3_make(0, 0.01f, -0.37f)), 0.11f, 1.0f, 0.82f, 0.28f);
             break;
         }
         case WEAP_ROCKET: {
-            draw_colored_box(r, r->prog_world, mat4_mul(mat4_translate(base), mat4_scale(vec3_make(0.15f, 0.15f, 0.52f))),
-                             0.36f, 0.34f, 0.32f, 1.0f, 0.18f);
-            draw_colored_box(r, r->prog_world, mat4_mul(mat4_translate(vec3_add(base, vec3_make(0, 0, -0.25f))),
-                             mat4_scale(vec3_make(0.11f, 0.11f, 0.06f))), 0.95f, 0.42f, 0.15f, 1.0f, flash);
+            /* Quake/Doom cylindrical heavy tube rocket launcher with glowing warhead tip */
+            draw_mesh(r, &r->mesh_cyl, mat4_mul(weap_root, mat4_mul(rx90, mat4_scale(vec3_make(0.145f, 0.56f, 0.145f)))),
+                      0.38f, 0.36f, 0.34f, 1.0f, 0.04f, 0.84f);
+            draw_mesh(r, &r->mesh_cyl, mat4_mul(weap_root, mat4_mul(mat4_translate(vec3_make(0, 0, -0.26f)),
+                      mat4_mul(rx90, mat4_scale(vec3_make(0.165f, 0.06f, 0.165f))))), 0.62f, 0.46f, 0.26f, 1.0f, 0.08f, 0.88f);
+            draw_mesh(r, &r->mesh_cone, mat4_mul(weap_root, mat4_mul(mat4_translate(vec3_make(0, 0, -0.29f)),
+                      mat4_mul(mat4_rotate_x(-SW_PI * 0.5f), mat4_scale(vec3_make(0.10f, 0.10f, 0.10f))))), 0.92f, 0.28f, 0.14f, 1.0f, 0.45f, 0.7f);
+            draw_gloved_hand(r, vec3_add(base, vec3_make(0, -0.09f, 0.08f)));
+            if (flaring) draw_muzzle_star(r, vec3_add(base, vec3_make(0, 0, -0.34f)), 0.15f, 1.0f, 0.62f, 0.18f);
             break;
         }
         case WEAP_THUNDERBOLT: {
-            draw_colored_box(r, r->prog_world, mat4_mul(mat4_translate(base), mat4_scale(vec3_make(0.12f, 0.10f, 0.44f))),
-                             0.64f, 0.48f, 0.30f, 1.0f, 0.2f);
-            draw_colored_box(r, r->prog_world, mat4_mul(mat4_translate(vec3_add(base, vec3_make(0, 0.04f, -0.18f))),
-                             mat4_scale(vec3_make(0.08f, 0.08f, 0.12f))), 0.35f, 0.92f, 1.0f, 1.0f, 1.2f);
+            /* Brass Tesla Coil Lightning Gun with copper rings + crackling cyan sphere */
+            draw_mesh(r, &r->mesh_cyl, mat4_mul(weap_root, mat4_mul(rx90, mat4_scale(vec3_make(0.10f, 0.46f, 0.10f)))),
+                      0.68f, 0.48f, 0.28f, 1.0f, 0.06f, 0.90f);
+            for (int k = 0; k < 3; ++k) {
+                draw_mesh(r, &r->mesh_cyl, mat4_mul(weap_root, mat4_mul(mat4_translate(vec3_make(0, 0, -0.05f - (float)k * 0.08f)),
+                          mat4_mul(rx90, mat4_scale(vec3_make(0.135f, 0.025f, 0.135f))))), 0.85f, 0.68f, 0.38f, 1.0f, 0.12f, 0.94f);
+            }
+            draw_mesh(r, &r->mesh_sphere, mat4_mul(weap_root, mat4_mul(mat4_translate(vec3_make(0, 0, -0.26f)),
+                      mat4_scale(vec3_make(0.085f, 0.085f, 0.085f)))), 0.35f, 0.92f, 1.0f, 1.0f, 1.35f, 0.95f);
+            draw_gloved_hand(r, vec3_add(base, vec3_make(0, -0.08f, 0.12f)));
             break;
         }
         case WEAP_PITCHFORK: {
-            /* 4-prong crimson-tipped Blood pitchfork! */
-            draw_colored_box(r, r->prog_world, mat4_mul(mat4_translate(vec3_add(base, vec3_make(0, -0.04f, 0.08f))),
-                             mat4_scale(vec3_make(0.05f, 0.05f, 0.40f))), 0.48f, 0.28f, 0.16f, 1.0f, 0.12f);
-            for (int k = -1; k <= 1; ++k) {
-                draw_colored_box(r, r->prog_world, mat4_mul(mat4_translate(vec3_add(base, vec3_make((float)k * 0.055f, 0.02f, -0.16f))),
-                                 mat4_scale(vec3_make(0.018f, 0.025f, 0.22f))), 0.85f, 0.22f, 0.22f, 1.0f, 0.35f);
+            /* Iconic Blood 4-prong crimson-tipped pitchfork! */
+            draw_mesh(r, &r->mesh_cyl, mat4_mul(weap_root, mat4_mul(mat4_translate(vec3_make(0, -0.03f, 0.10f)),
+                      mat4_mul(rx90, mat4_scale(vec3_make(0.042f, 0.42f, 0.042f))))), 0.48f, 0.28f, 0.15f, 1.0f, 0.03f, 0.35f);
+            draw_mesh(r, &r->mesh_box, mat4_mul(weap_root, mat4_mul(mat4_translate(vec3_make(0, 0.0f, -0.10f)),
+                      mat4_scale(vec3_make(0.18f, 0.028f, 0.032f)))), 0.42f, 0.44f, 0.48f, 1.0f, 0.04f, 0.85f);
+            for (int k = 0; k < 4; ++k) {
+                float ox = -0.075f + (float)k * 0.050f;
+                draw_mesh(r, &r->mesh_cone, mat4_mul(weap_root, mat4_mul(mat4_translate(vec3_make(ox, 0.01f, -0.24f)),
+                          mat4_mul(mat4_rotate_x(-SW_PI * 0.5f), mat4_scale(vec3_make(0.020f, 0.26f, 0.020f))))),
+                          0.82f, 0.20f, 0.22f, 1.0f, 0.18f, 0.88f);
             }
+            draw_gloved_hand(r, vec3_add(base, vec3_make(0, -0.04f, 0.12f)));
             break;
         }
         case WEAP_FLAREGUN: {
-            draw_colored_box(r, r->prog_world, mat4_mul(mat4_translate(base), mat4_scale(vec3_make(0.09f, 0.10f, 0.30f))),
-                             0.85f, 0.58f, 0.22f, 1.0f, flash);
-            draw_colored_box(r, r->prog_world, mat4_mul(mat4_translate(vec3_add(base, vec3_make(0, 0.02f, -0.15f))),
-                             mat4_scale(vec3_make(0.06f, 0.06f, 0.06f))), 1.0f, 0.45f, 0.12f, 1.0f, 1.0f);
+            /* Iconic Blood Brass Break-Action Flare Pistol + Iron Breech + Glowing Orange Bore + Walnut Grip */
+            draw_mesh(r, &r->mesh_cyl, mat4_mul(weap_root, mat4_mul(mat4_translate(vec3_make(0, 0.022f, -0.08f)),
+                      mat4_mul(rx90, mat4_scale(vec3_make(0.068f, 0.28f, 0.068f))))), 0.84f, 0.56f, 0.22f, 1.0f, 0.06f, 0.92f);
+            draw_mesh(r, &r->mesh_cyl, mat4_mul(weap_root, mat4_mul(mat4_translate(vec3_make(0, 0.022f, -0.22f)),
+                      mat4_mul(rx90, mat4_scale(vec3_make(0.076f, 0.024f, 0.076f))))), 0.24f, 0.24f, 0.28f, 1.0f, 0.04f, 0.88f);
+            draw_mesh(r, &r->mesh_sphere, mat4_mul(weap_root, mat4_mul(mat4_translate(vec3_make(0, 0.022f, -0.225f)),
+                      mat4_scale(vec3_make(0.044f, 0.044f, 0.015f)))), 1.0f, 0.35f, 0.08f, 1.0f, 1.15f, 0.9f);
+            draw_mesh(r, &r->mesh_box, mat4_mul(weap_root, mat4_mul(mat4_translate(vec3_make(0, 0.010f, 0.065f)),
+                      mat4_scale(vec3_make(0.074f, 0.076f, 0.095f)))), 0.24f, 0.24f, 0.28f, 1.0f, 0.04f, 0.88f);
+            draw_mesh(r, &r->mesh_box, mat4_mul(weap_root, mat4_mul(mat4_translate(vec3_make(0, 0.056f, 0.092f)),
+                      mat4_mul(mat4_rotate_x(-0.5f), mat4_scale(vec3_make(0.018f, 0.036f, 0.022f))))), 0.72f, 0.52f, 0.24f, 1.0f, 0.04f, 0.88f);
+            draw_mesh(r, &r->mesh_box, mat4_mul(weap_root, mat4_mul(mat4_translate(vec3_make(0, -0.072f, 0.075f)),
+                      mat4_mul(mat4_rotate_x(-0.25f), mat4_scale(vec3_make(0.056f, 0.13f, 0.078f))))), 0.44f, 0.22f, 0.12f, 1.0f, 0.02f, 0.38f);
+            draw_gloved_hand(r, vec3_add(base, vec3_make(0.01f, -0.072f, 0.085f)));
+            if (flaring) draw_muzzle_star(r, vec3_add(base, vec3_make(0, 0.02f, -0.25f)), 0.11f, 1.0f, 0.45f, 0.12f);
             break;
         }
         case WEAP_AEROSOL: {
-            /* Red Aerosol can + Zippo flame tip */
-            draw_colored_box(r, r->prog_world, mat4_mul(mat4_translate(base), mat4_scale(vec3_make(0.10f, 0.18f, 0.10f))),
-                             0.88f, 0.18f, 0.16f, 1.0f, 0.22f);
-            draw_colored_box(r, r->prog_world, mat4_mul(mat4_translate(vec3_add(base, vec3_make(-0.08f, 0.06f, -0.10f))),
-                             mat4_scale(vec3_make(0.05f, 0.09f, 0.05f))), 1.0f, 0.72f, 0.18f, 1.0f, 1.15f);
+            /* Iconic Blood Red Aerosol Can + Zippo Lighter Flame! */
+            draw_mesh(r, &r->mesh_cyl, mat4_mul(weap_root, mat4_scale(vec3_make(0.095f, 0.19f, 0.095f))),
+                      0.86f, 0.16f, 0.14f, 1.0f, 0.06f, 0.82f);
+            draw_mesh(r, &r->mesh_sphere, mat4_mul(weap_root, mat4_mul(mat4_translate(vec3_make(0, 0.095f, 0)),
+                      mat4_scale(vec3_make(0.092f, 0.05f, 0.092f)))), 0.82f, 0.84f, 0.88f, 1.0f, 0.06f, 0.92f);
+            draw_mesh(r, &r->mesh_cone, mat4_mul(weap_root, mat4_mul(mat4_translate(vec3_make(-0.07f, 0.08f, -0.09f)),
+                      mat4_scale(vec3_make(0.045f, 0.095f, 0.045f)))), 1.0f, 0.68f, 0.16f, 0.95f, 1.4f, 0.2f);
+            draw_gloved_hand(r, vec3_add(base, vec3_make(0, -0.06f, 0.04f)));
             break;
         }
         case WEAP_PIPEBOMB:
         case WEAP_TNT: {
-            draw_colored_box(r, r->prog_world, mat4_mul(mat4_translate(base), mat4_scale(vec3_make(0.11f, 0.11f, 0.24f))),
-                             0.88f, 0.22f, 0.18f, 1.0f, 0.35f);
-            draw_colored_box(r, r->prog_world, mat4_mul(mat4_translate(vec3_make(-0.22f + bob_x, -0.28f - bob_y, -0.46f)),
-                             mat4_scale(vec3_make(0.09f, 0.14f, 0.08f))), 0.35f, 0.38f, 0.42f, 1.0f, 0.2f);
+            /* Bundled Crimson TNT / Pipebomb + Left-hand Steel Detonator */
+            for (int s = -1; s <= 1; ++s) {
+                draw_mesh(r, &r->mesh_cyl, mat4_mul(weap_root, mat4_mul(mat4_translate(vec3_make((float)s * 0.032f, 0, 0)),
+                          mat4_mul(rx90, mat4_scale(vec3_make(0.038f, 0.22f, 0.038f))))), 0.88f, 0.18f, 0.15f, 1.0f, 0.08f, 0.55f);
+            }
+            draw_muzzle_star(r, vec3_add(base, vec3_make(0, 0.02f, -0.13f)), 0.045f, 1.0f, 0.82f, 0.25f);
+            draw_mesh(r, &r->mesh_box, mat4_mul(mat4_translate(vec3_make(-0.22f + bob_x, -0.28f - bob_y, -0.46f)),
+                      mat4_scale(vec3_make(0.085f, 0.13f, 0.075f))), 0.34f, 0.38f, 0.44f, 1.0f, 0.06f, 0.80f);
+            draw_mesh(r, &r->mesh_sphere, mat4_mul(mat4_translate(vec3_make(-0.22f + bob_x, -0.20f - bob_y, -0.46f)),
+                      mat4_scale(vec3_make(0.035f, 0.035f, 0.035f))), 1.0f, 0.18f, 0.18f, 1.0f, 1.1f, 0.9f);
+            draw_gloved_hand(r, vec3_add(base, vec3_make(0, -0.05f, 0.05f)));
             break;
         }
         case WEAP_VOODOO: {
-            /* Stitched burlap Voodoo Doll + glowing cursed pin */
-            draw_colored_box(r, r->prog_world, mat4_mul(mat4_translate(base), mat4_scale(vec3_make(0.12f, 0.18f, 0.08f))),
-                             0.70f, 0.58f, 0.42f, 1.0f, 0.2f);
-            draw_colored_box(r, r->prog_world, mat4_mul(mat4_translate(vec3_add(base, vec3_make(0, 0.12f, 0))),
-                             mat4_scale(vec3_make(0.09f, 0.09f, 0.09f))), 0.72f, 0.60f, 0.45f, 1.0f, 0.2f);
-            draw_colored_box(r, r->prog_world, mat4_mul(mat4_translate(vec3_add(base, vec3_make(-0.08f, 0.02f, -0.05f))),
-                             mat4_scale(vec3_make(0.14f, 0.02f, 0.02f))), 0.85f, 0.25f, 1.0f, 1.0f, 1.0f);
+            /* Sculpted Burlap Voodoo Doll + Glowing Cursed Pin */
+            draw_mesh(r, &r->mesh_sphere, mat4_mul(weap_root, mat4_scale(vec3_make(0.11f, 0.16f, 0.08f))),
+                      0.68f, 0.54f, 0.38f, 1.0f, 0.05f, 0.18f);
+            draw_mesh(r, &r->mesh_sphere, mat4_mul(weap_root, mat4_mul(mat4_translate(vec3_make(0, 0.11f, 0)),
+                      mat4_scale(vec3_make(0.088f, 0.088f, 0.088f)))), 0.72f, 0.58f, 0.42f, 1.0f, 0.05f, 0.18f);
+            draw_mesh(r, &r->mesh_cyl, mat4_mul(weap_root, mat4_mul(mat4_translate(vec3_make(-0.07f + kick * 0.4f, 0.02f, -0.04f)),
+                      mat4_mul(mat4_rotate_z_local(1.35f), mat4_scale(vec3_make(0.015f, 0.16f, 0.015f))))),
+                      0.88f, 0.28f, 1.0f, 1.0f, 1.15f, 0.90f);
+            draw_gloved_hand(r, vec3_add(base, vec3_make(0, -0.08f, 0.05f)));
             break;
         }
         case WEAP_CHAINSAW: {
-            float vib = sinf(p->walk_bob * 4.0f) * 0.008f;
-            draw_colored_box(r, r->prog_world, mat4_mul(mat4_translate(vec3_add(base, vec3_make(vib, 0, 0.04f))),
-                             mat4_scale(vec3_make(0.14f, 0.12f, 0.18f))), 0.92f, 0.74f, 0.14f, 1.0f, 0.25f);
-            draw_colored_box(r, r->prog_world, mat4_mul(mat4_translate(vec3_add(base, vec3_make(vib, 0.02f, -0.22f))),
-                             mat4_scale(vec3_make(0.05f, 0.09f, 0.36f))), 0.72f, 0.75f, 0.80f, 1.0f, 0.30f);
+            float vib = sinf(p->walk_bob * 6.0f + kick * 20.0f) * 0.008f;
+            Mat4 cr = mat4_mul(mat4_translate(vec3_add(base, vec3_make(vib, 0, 0.02f))), mat4_rotate_x(pitch_kick));
+            draw_mesh(r, &r->mesh_box, mat4_mul(cr, mat4_scale(vec3_make(0.135f, 0.115f, 0.18f))),
+                      0.92f, 0.72f, 0.14f, 1.0f, 0.08f, 0.75f);
+            draw_mesh(r, &r->mesh_box, mat4_mul(cr, mat4_mul(mat4_translate(vec3_make(0, 0.02f, -0.24f)),
+                      mat4_scale(vec3_make(0.036f, 0.088f, 0.38f)))), 0.74f, 0.78f, 0.84f, 1.0f, 0.08f, 0.94f);
+            draw_gloved_hand(r, vec3_add(base, vec3_make(0, -0.07f, 0.10f)));
             break;
         }
         default: {
             /* Laser Tripmine emitter */
-            draw_colored_box(r, r->prog_world, mat4_mul(mat4_translate(base), mat4_scale(vec3_make(0.14f, 0.09f, 0.18f))),
-                             0.25f, 0.28f, 0.34f, 1.0f, 0.15f);
-            draw_colored_box(r, r->prog_world, mat4_mul(mat4_translate(vec3_add(base, vec3_make(0, 0.03f, -0.09f))),
-                             mat4_scale(vec3_make(0.05f, 0.05f, 0.05f))), 1.0f, 0.15f, 0.18f, 1.0f, 1.0f);
+            draw_mesh(r, &r->mesh_box, mat4_mul(weap_root, mat4_scale(vec3_make(0.13f, 0.085f, 0.16f))),
+                      0.28f, 0.32f, 0.38f, 1.0f, 0.05f, 0.80f);
+            draw_mesh(r, &r->mesh_sphere, mat4_mul(weap_root, mat4_mul(mat4_translate(vec3_make(0, 0.03f, -0.085f)),
+                      mat4_scale(vec3_make(0.048f, 0.048f, 0.048f)))), 1.0f, 0.14f, 0.16f, 1.0f, 1.25f, 0.95f);
+            draw_gloved_hand(r, vec3_add(base, vec3_make(0, -0.06f, 0.06f)));
             break;
         }
     }
 }
+
+/* ============================================================================
+ * ATMOSPHERIC AMBIENT PARTICLES (SNOW, EMBERS, DUST MOTES, HAUNTED SPARKS)
+ * ============================================================================ */
+
+static void draw_ambient_particles(GlRenderer *r, const GameWorld *w, Vec3 cam_pos) {
+    float pr = 1.0f, pg = 0.92f, pb = 0.65f, speed = 0.65f, dir_y = 1.0f, sz = 0.07f;
+    switch (w->scene) {
+        case SCENE_DAY01: pr = 0.92f; pg = 0.96f; pb = 1.00f; speed = 1.4f; dir_y = -1.0f; sz = 0.08f; break; /* Falling winter snow! */
+        case SCENE_DAY02: pr = 1.00f; pg = 0.90f; pb = 0.58f; speed = 0.4f; dir_y =  0.4f; sz = 0.06f; break; /* Golden sunbeams dust */
+        case SCENE_DAY03: pr = 0.92f; pg = 0.82f; pb = 0.62f; speed = 0.9f; dir_y =  0.2f; sz = 0.06f; break; /* Desert breeze sand */
+        case SCENE_DAY04: pr = 1.00f; pg = 0.55f; pb = 0.22f; speed = 1.1f; dir_y =  1.0f; sz = 0.07f; break; /* Forge embers */
+        case SCENE_DAY05: pr = 0.92f; pg = 0.28f; pb = 0.62f; speed = 0.6f; dir_y =  0.5f; sz = 0.07f; break; /* Crypt mist sparks */
+        case SCENE_DAY06: pr = 1.00f; pg = 0.42f; pb = 0.14f; speed = 1.6f; dir_y =  1.0f; sz = 0.08f; break; /* Hellfire ash */
+        default:          pr = 1.00f; pg = 0.88f; pb = 0.46f; speed = 0.5f; dir_y =  0.6f; sz = 0.07f; break; /* Festive hall sparkles */
+    }
+    for (int i = 0; i < 32; ++i) {
+        float h1 = fmodf(sinf((float)i * 12.9898f) * 43758.5453f, 1.0f);
+        float h2 = fmodf(sinf((float)i * 78.2330f) * 43758.5453f, 1.0f);
+        float h3 = fmodf(sinf((float)i * 39.4250f) * 43758.5453f, 1.0f);
+        if (h1 < 0) h1 += 1.0f;
+        if (h2 < 0) h2 += 1.0f;
+        if (h3 < 0) h3 += 1.0f;
+        float drift = sinf(w->time_sec * 1.2f + (float)i) * 0.8f;
+        float ox = (h1 - 0.5f) * 26.0f + drift;
+        float oz = (h2 - 0.5f) * 26.0f + cosf(w->time_sec * 0.9f + (float)i) * 0.8f;
+        float oy = fmodf(h3 * 12.0f + w->time_sec * speed * dir_y + 120.0f, 12.0f) - 2.0f;
+        Vec3 pos = vec3_make(cam_pos.x + ox, sw_clampf(cam_pos.y + oy, 0.6f, 18.0f), cam_pos.z + oz);
+        draw_mesh(r, &r->mesh_sphere, mat4_mul(mat4_translate(pos), mat4_scale(vec3_make(sz, sz, sz))),
+                  pr, pg, pb, 0.78f, 1.1f, 0.2f);
+    }
+}
+
+/* ============================================================================
+ * MAIN 3D SCENE PASS
+ * ============================================================================ */
 
 static void render_scene_view(GlRenderer *r, const GameWorld *w, Mat4 proj, Mat4 view,
                               Vec3 cam_pos, float cam_yaw, int viewer_slot, Mat4 light_vp, Vec3 sun_dir) {
     glEnable(GL_DEPTH_TEST);
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-
-    /* Distinct atmospheric sky & lighting mood per Act I realm! */
-    float sr = 0.68f, sg = 0.58f, sb = 0.46f;
-    float ar = 0.30f, ag = 0.25f, ab = 0.22f;
-    float fr = 0.11f, fg = 0.07f, fb = 0.06f, fd = 0.012f;
-    if (w->scene == SCENE_DAY01) {
-        glClearColor(0.05f, 0.06f, 0.14f, 1.0f);
-        sr = 0.56f; sg = 0.62f; sb = 0.86f; ar = 0.26f; ag = 0.26f; ab = 0.34f;
-        fr = 0.06f; fg = 0.07f; fb = 0.16f; fd = 0.015f;
-    } else if (w->scene == SCENE_DAY02) {
-        glClearColor(0.24f, 0.42f, 0.58f, 1.0f); /* Sunlit Peruvian sky */
-        sr = 0.88f; sg = 0.78f; sb = 0.58f; ar = 0.28f; ag = 0.24f; ab = 0.20f;
-        fr = 0.18f; fg = 0.15f; fb = 0.12f; fd = 0.014f;
-    } else if (w->scene == SCENE_DAY03) {
-        glClearColor(0.46f, 0.68f, 0.90f, 1.0f); /* Bright sunlit de_yule_dust noon! */
-        sr = 0.96f; sg = 0.92f; sb = 0.78f; ar = 0.42f; ag = 0.38f; ab = 0.32f;
-        fr = 0.52f; fg = 0.62f; fb = 0.74f; fd = 0.008f;
-    } else if (w->scene == SCENE_DAY04) {
-        glClearColor(0.10f, 0.07f, 0.06f, 1.0f); /* Gothic Quake rust gloom */
-        sr = 0.62f; sg = 0.48f; sb = 0.36f; ar = 0.24f; ag = 0.20f; ab = 0.18f;
-        fr = 0.10f; fg = 0.07f; fb = 0.06f; fd = 0.016f;
-    } else if (w->scene == SCENE_DAY05) {
-        glClearColor(0.08f, 0.04f, 0.10f, 1.0f); /* Foggy Blood midnight crimson */
-        sr = 0.55f; sg = 0.32f; sb = 0.40f; ar = 0.22f; ag = 0.16f; ab = 0.22f;
-        fr = 0.10f; fg = 0.05f; fb = 0.11f; fd = 0.019f;
-    } else if (w->scene == SCENE_DAY06) {
-        glClearColor(0.14f, 0.04f, 0.04f, 1.0f); /* Doom Brimstone sky */
-        sr = 0.72f; sg = 0.56f; sb = 0.52f; ar = 0.28f; ag = 0.24f; ab = 0.24f;
-        fr = 0.12f; fg = 0.05f; fb = 0.05f; fd = 0.014f;
-    } else if (w->scene == SCENE_PREVIEW) {
-        glClearColor(0.05f, 0.08f, 0.12f, 1.0f);
-    } else {
-        glClearColor(0.10f, 0.06f, 0.05f, 1.0f);
-    }
+    glClearColor(0.02f, 0.02f, 0.04f, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+    /* 0. Procedural Biome Skybox Pass (extracts camera basis directly from view & proj) */
+    glDisable(GL_DEPTH_TEST);
+    glDepthMask(GL_FALSE);
+    glUseProgram(r->prog_sky);
+    glUniform3f(glGetUniformLocation(r->prog_sky, "uCamRight"), view.m[0], view.m[4], view.m[8]);
+    glUniform3f(glGetUniformLocation(r->prog_sky, "uCamUp"),    view.m[1], view.m[5], view.m[9]);
+    glUniform3f(glGetUniformLocation(r->prog_sky, "uCamFwd"),  -view.m[2], -view.m[6], -view.m[10]);
+    float inv_px = (fabsf(proj.m[0]) > 1e-5f) ? (1.0f / fabsf(proj.m[0])) : 1.0f;
+    float inv_py = (fabsf(proj.m[5]) > 1e-5f) ? (1.0f / fabsf(proj.m[5])) : 1.0f;
+    glUniform2f(glGetUniformLocation(r->prog_sky, "uInvProj"), inv_px, inv_py);
+    glUniform1i(glGetUniformLocation(r->prog_sky, "uSceneId"), (int)w->scene);
+    glUniform1f(glGetUniformLocation(r->prog_sky, "uTime"), w->time_sec);
+    glBindVertexArray(r->quad_vao);
+    glDrawArrays(GL_TRIANGLES, 0, 6);
+    glDepthMask(GL_TRUE);
+    glEnable(GL_DEPTH_TEST);
+
+    /* Per-realm realistic hemisphere + directional sun + atmospheric fog palette */
+    float sr = 0.78f, sg = 0.66f, sb = 0.50f;
+    float sky_r = 0.34f, sky_g = 0.30f, sky_b = 0.36f;
+    float gnd_r = 0.24f, gnd_g = 0.17f, gnd_b = 0.14f;
+    float fr = 0.10f, fg = 0.08f, fb = 0.12f, fd = 0.010f;
+    if (w->scene == SCENE_DAY01) {
+        sr = 0.66f; sg = 0.70f; sb = 0.96f;
+        sky_r = 0.26f; sky_g = 0.26f; sky_b = 0.44f;
+        gnd_r = 0.22f; gnd_g = 0.14f; gnd_b = 0.26f;
+        fr = 0.10f; fg = 0.07f; fb = 0.18f; fd = 0.012f;
+    } else if (w->scene == SCENE_DAY02) {
+        sr = 1.00f; sg = 0.88f; sb = 0.66f;
+        sky_r = 0.34f; sky_g = 0.46f; sky_b = 0.58f;
+        gnd_r = 0.28f; gnd_g = 0.22f; gnd_b = 0.16f;
+        fr = 0.30f; fg = 0.34f; fb = 0.36f; fd = 0.010f;
+    } else if (w->scene == SCENE_DAY03) {
+        sr = 1.05f; sg = 0.98f; sb = 0.82f;
+        sky_r = 0.44f; sky_g = 0.56f; sky_b = 0.72f;
+        gnd_r = 0.44f; gnd_g = 0.36f; gnd_b = 0.24f;
+        fr = 0.68f; fg = 0.66f; fb = 0.58f; fd = 0.006f;
+    } else if (w->scene == SCENE_DAY04) {
+        sr = 0.76f; sg = 0.58f; sb = 0.42f;
+        sky_r = 0.28f; sky_g = 0.22f; sky_b = 0.30f;
+        gnd_r = 0.24f; gnd_g = 0.16f; gnd_b = 0.12f;
+        fr = 0.14f; fg = 0.09f; fb = 0.10f; fd = 0.013f;
+    } else if (w->scene == SCENE_DAY05) {
+        sr = 0.72f; sg = 0.36f; sb = 0.44f;
+        sky_r = 0.24f; sky_g = 0.16f; sky_b = 0.32f;
+        gnd_r = 0.20f; gnd_g = 0.12f; gnd_b = 0.16f;
+        fr = 0.14f; fg = 0.06f; fb = 0.15f; fd = 0.015f;
+    } else if (w->scene == SCENE_DAY06) {
+        sr = 0.88f; sg = 0.64f; sb = 0.54f;
+        sky_r = 0.36f; sky_g = 0.24f; sky_b = 0.24f;
+        gnd_r = 0.32f; gnd_g = 0.16f; gnd_b = 0.12f;
+        fr = 0.20f; fg = 0.08f; fb = 0.06f; fd = 0.012f;
+    }
 
     glUseProgram(r->prog_world);
     glUniformMatrix4fv(glGetUniformLocation(r->prog_world, "uProj"), 1, GL_FALSE, proj.m);
@@ -1155,9 +1617,13 @@ static void render_scene_view(GlRenderer *r, const GameWorld *w, Mat4 proj, Mat4
     glUniform3f(glGetUniformLocation(r->prog_world, "uCamPos"), cam_pos.x, cam_pos.y, cam_pos.z);
     glUniform3f(glGetUniformLocation(r->prog_world, "uSunDir"), sun_dir.x, sun_dir.y, sun_dir.z);
     glUniform3f(glGetUniformLocation(r->prog_world, "uSunColor"), sr, sg, sb);
-    glUniform3f(glGetUniformLocation(r->prog_world, "uAmbient"),  ar, ag, ab);
+    glUniform3f(glGetUniformLocation(r->prog_world, "uSkyAmbient"), sky_r, sky_g, sky_b);
+    glUniform3f(glGetUniformLocation(r->prog_world, "uGroundAmbient"), gnd_r, gnd_g, gnd_b);
     glUniform3f(glGetUniformLocation(r->prog_world, "uFogColor"), fr, fg, fb);
     glUniform1f(glGetUniformLocation(r->prog_world, "uFogDensity"), fd);
+    glUniform4f(glGetUniformLocation(r->prog_world, "uTint"), 1.0f, 1.0f, 1.0f, 1.0f);
+    glUniform1f(glGetUniformLocation(r->prog_world, "uMeshEmissive"), 0.0f);
+    glUniform1f(glGetUniformLocation(r->prog_world, "uMeshGloss"), 0.25f);
 
     int lcount = w->light_count > 12 ? 12 : w->light_count;
     float lpos[12 * 4] = {0};
@@ -1176,126 +1642,229 @@ static void render_scene_view(GlRenderer *r, const GameWorld *w, Mat4 proj, Mat4
     glUniform4fv(glGetUniformLocation(r->prog_world, "uLightPosRad"), 12, lpos);
     glUniform4fv(glGetUniformLocation(r->prog_world, "uLightColInt"), 12, lcol);
 
-    /* 1. Draw Chunked Textured Voxel World */
+    /* 1. Draw Chunked Normal-Mapped 64x64 Textured Voxel World */
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, r->voxel_atlas_tex);
     glUniform1i(glGetUniformLocation(r->prog_world, "uTex"), 0);
     glActiveTexture(GL_TEXTURE1);
     glBindTexture(GL_TEXTURE_2D, r->shadow_tex);
     glUniform1i(glGetUniformLocation(r->prog_world, "uShadowMap"), 1);
+    glActiveTexture(GL_TEXTURE2);
+    glBindTexture(GL_TEXTURE_2D, r->voxel_normal_tex);
+    glUniform1i(glGetUniformLocation(r->prog_world, "uNormalMap"), 2);
 
     Mat4 ident = mat4_identity();
     glUniformMatrix4fv(glGetUniformLocation(r->prog_world, "uModel"), 1, GL_FALSE, ident.m);
     glUniform1i(glGetUniformLocation(r->prog_world, "uUseTex"), 2);
     draw_all_chunks(r);
 
+    glActiveTexture(GL_TEXTURE2);
+    glBindTexture(GL_TEXTURE_2D, r->flat_normal_tex);
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, r->white_tex);
 
-    /* 2. Portals, Spinning Tree Star, Barrels, Boulders, Flares/Smoke, Tripmines */
-    if (w->scene == SCENE_HUB) {
-        Mat4 star_m = mat4_mul(mat4_translate(vec3_make(64.5f, 16.0f, 64.5f)),
-                      mat4_mul(mat4_rotate_y(w->time_sec * 1.4f), mat4_scale(vec3_make(1.2f, 1.2f, 1.2f))));
-        draw_colored_box(r, r->prog_world, star_m, 1.0f, 0.9f, 0.25f, 1.0f, 1.0f);
+    Mat4 rx90 = mat4_rotate_x(SW_PI * 0.5f);
 
+    /* 2. Grand Festive Hall Sculpted Props OR Return Portal */
+    if (w->scene == SCENE_HUB) {
+        /* Lush 4-Tier Sculpted Conical Pine Boughs forming a classic tapered Christmas Tree! */
+        static const float tiers[4][4] = {
+            {5.8f,  13.2f, 4.8f, 0.08f},
+            {8.2f,  10.8f, 4.4f, 0.10f},
+            {10.5f,  8.2f, 4.0f, 0.12f},
+            {12.6f,  5.4f, 3.6f, 0.15f}
+        };
+        for (int t = 0; t < 4; ++t) {
+            draw_mesh(r, &r->mesh_cone, mat4_mul(mat4_translate(vec3_make(64.5f, tiers[t][0], 64.5f)),
+                      mat4_scale(vec3_make(tiers[t][1], tiers[t][2], tiers[t][1]))),
+                      0.07f, 0.32f + (float)t * 0.04f, 0.12f, 1.0f, 0.02f, 0.24f);
+        }
+
+        /* Multi-Point Sculpted 3D Golden Star Topper */
+        Mat4 star_base = mat4_mul(mat4_translate(vec3_make(64.5f, 14.8f, 64.5f)), mat4_rotate_y(w->time_sec * 1.1f));
+        draw_mesh(r, &r->mesh_sphere, mat4_mul(star_base, mat4_scale(vec3_make(0.85f, 0.85f, 0.85f))),
+                  1.0f, 0.92f, 0.35f, 1.0f, 1.20f, 0.95f);
+        for (int s = 0; s < 6; ++s) {
+            float ang = (float)s * (SW_PI / 3.0f);
+            draw_mesh(r, &r->mesh_cone, mat4_mul(star_base, mat4_mul(mat4_rotate_z_local(ang), mat4_mul(mat4_translate(vec3_make(0, 0.65f, 0)),
+                      mat4_scale(vec3_make(0.40f, 1.25f, 0.40f))))), 1.0f, 0.86f, 0.22f, 1.0f, 1.10f, 0.92f);
+        }
+
+        /* 32 Glossy Spherical Christmas Baubles + 44 Golden Fairy Lights draped cleanly along the pine tiers! */
+        static const float orn_cols[4][3] = {
+            {0.96f, 0.14f, 0.20f}, {1.00f, 0.82f, 0.18f}, {0.18f, 0.86f, 1.00f}, {0.98f, 0.28f, 0.84f}
+        };
+        for (int i = 0; i < 32; ++i) {
+            float frac = (float)i / 32.0f;
+            float y = 3.7f + frac * 9.8f;
+            float rad = 6.35f - frac * 4.55f;
+            float ang = (float)i * 0.95f + 0.4f;
+            float ox = 64.5f + cosf(ang) * rad;
+            float oz = 64.5f + sinf(ang) * rad;
+            bool earned = (i < 24) && ((w->shard_mask & (1u << (unsigned)i)) != 0u);
+            const float *c = orn_cols[i & 3];
+            float tw = earned ? (0.95f + 0.30f * sinf(w->time_sec * 3.5f + (float)i)) : (0.50f + 0.22f * sinf(w->time_sec * 2.2f + (float)i));
+            float sz = earned ? 0.58f : 0.46f;
+            draw_mesh(r, &r->mesh_sphere, mat4_mul(mat4_translate(vec3_make(ox, y, oz)), mat4_scale(vec3_make(sz, sz, sz))),
+                      c[0], c[1], c[2], 1.0f, tw, 0.96f);
+        }
+        for (int i = 0; i < 44; ++i) {
+            float frac = (float)i / 44.0f;
+            float y = 3.6f + frac * 10.0f;
+            float rad = 6.50f - frac * 4.65f;
+            float ang = (float)i * 0.65f + 1.1f;
+            float ox = 64.5f + cosf(ang) * rad;
+            float oz = 64.5f + sinf(ang) * rad;
+            float tw = 0.90f + 0.45f * sinf(w->time_sec * 4.5f + (float)i * 1.4f);
+            draw_mesh(r, &r->mesh_sphere, mat4_mul(mat4_translate(vec3_make(ox, y, oz)), mat4_scale(vec3_make(0.22f, 0.22f, 0.22f))),
+                      1.0f, 0.92f, 0.48f, 1.0f, tw, 0.95f);
+        }
+
+        /* Animated 3D Conical Fireplace Flames & Mantle Candles */
+        for (int f = 0; f < 6; ++f) {
+            float fx = 61.5f + (float)f * 1.15f;
+            float flk = 0.78f + 0.32f * sinf(w->time_sec * 8.5f + (float)f * 1.7f);
+            draw_mesh(r, &r->mesh_cone, mat4_mul(mat4_translate(vec3_make(fx, 1.3f + flk * 0.7f, 28.9f)),
+                      mat4_scale(vec3_make(0.65f, 1.6f * flk, 0.65f))), 1.0f, 0.42f, 0.08f, 0.92f, 1.35f, 0.2f);
+            draw_mesh(r, &r->mesh_cone, mat4_mul(mat4_translate(vec3_make(fx, 1.2f + flk * 0.45f, 29.0f)),
+                      mat4_scale(vec3_make(0.36f, 1.0f * flk, 0.36f))), 1.0f, 0.90f, 0.32f, 0.95f, 1.55f, 0.2f);
+        }
+        for (int c = 0; c < 2; ++c) {
+            float cx = (c == 0) ? 58.5f : 70.5f;
+            draw_mesh(r, &r->mesh_cyl, mat4_mul(mat4_translate(vec3_make(cx, 7.25f, 30.5f)), mat4_scale(vec3_make(0.22f, 0.65f, 0.22f))),
+                      0.96f, 0.92f, 0.82f, 1.0f, 0.12f, 0.45f);
+            draw_mesh(r, &r->mesh_cone, mat4_mul(mat4_translate(vec3_make(cx, 7.75f, 30.5f)), mat4_scale(vec3_make(0.18f, 0.38f, 0.18f))),
+                      1.0f, 0.82f, 0.26f, 0.95f, 1.45f, 0.2f);
+        }
+
+        /* 24 Portal Energy Fields + Glowing Keystone Orbs */
         for (int i = 0; i < SWIETA_PORTAL_COUNT; ++i) {
             const PortalMeta *meta = swieta_portal_meta(w->portals[i].day);
             bool unlocked = swieta_portal_is_unlocked(w->portals[i].day, w->now, w->unlock_all);
             bool done = (w->shard_mask & (1u << (unsigned)i)) != 0u;
-            float pr = unlocked ? (meta ? meta->color_r : 0.4f) : 0.35f;
-            float pg = unlocked ? (meta ? meta->color_g : 0.7f) : 0.48f;
-            float pb = unlocked ? (meta ? meta->color_b : 1.0f) : 0.62f;
+            float pr = unlocked ? (meta ? meta->color_r : 0.4f) : 0.28f;
+            float pg = unlocked ? (meta ? meta->color_g : 0.7f) : 0.38f;
+            float pb = unlocked ? (meta ? meta->color_b : 1.0f) : 0.52f;
             if (done) { pr = 1.0f; pg = 0.86f; pb = 0.25f; }
             Vec3 p = vec3_add(w->portals[i].pos, vec3_make(0.0f, 2.0f, 0.5f));
             bool x_wall = (w->portals[i].pos.x <= 30.0f || w->portals[i].pos.x >= 98.0f);
-            Vec3 sc = x_wall ? vec3_make(0.22f, 3.6f, 2.0f) : vec3_make(2.0f, 3.6f, 0.22f);
-            draw_colored_box(r, r->prog_world, mat4_mul(mat4_translate(p), mat4_scale(sc)),
-                             pr, pg, pb, unlocked ? 0.88f : 0.52f, unlocked ? 0.90f : 0.15f);
+            Vec3 sc = x_wall ? vec3_make(0.16f, 3.65f, 2.05f) : vec3_make(2.05f, 3.65f, 0.16f);
+            float pulse = unlocked ? (0.78f + 0.22f * sinf(w->time_sec * 3.0f + (float)i)) : 0.12f;
+            draw_mesh(r, &r->mesh_box, mat4_mul(mat4_translate(p), mat4_scale(sc)),
+                      pr, pg, pb, unlocked ? 0.78f : 0.42f, pulse, 0.90f);
+            /* Sculpted Keystone Crystal Sphere above each portal arch */
+            draw_mesh(r, &r->mesh_sphere, mat4_mul(mat4_translate(vec3_add(p, vec3_make(0, 2.55f, 0))),
+                      mat4_scale(vec3_make(0.55f, 0.55f, 0.55f))), pr, pg, pb, 1.0f, unlocked ? 1.1f : 0.18f, 0.96f);
         }
     } else {
-        Vec3 rp = vec3_add(w->return_portal_pos, vec3_make(0, 1.4f, 0));
-        draw_billboard_sprite(r, rp, 1.9f, 2.8f, 7, cam_yaw, 0.3f, 0.9f, 1.0f, 0.95f);
+        Vec3 rp = vec3_add(w->return_portal_pos, vec3_make(0, 1.35f, 0));
+        draw_billboard_sprite(r, rp, 2.1f, 3.0f, SPR_FX_ORB, 1, cam_yaw, 0.35f, 0.92f, 1.0f, 1.05f);
     }
 
-    /* Explosive Red Nukage / Powder Barrels */
+    /* Ribbed Cylindrical Explosive Barrels (Crimson drum + steel rims + glowing green top) */
     for (int i = 0; i < w->barrel_count; ++i) {
         if (!w->barrels[i].active) continue;
         Vec3 bp = w->barrels[i].pos;
-        draw_colored_box(r, r->prog_world, mat4_mul(mat4_translate(vec3_add(bp, vec3_make(0, 0.65f, 0))),
-                         mat4_scale(vec3_make(0.75f, 1.25f, 0.75f))), 0.86f, 0.16f, 0.16f, 1.0f, 0.18f);
-        draw_colored_box(r, r->prog_world, mat4_mul(mat4_translate(vec3_add(bp, vec3_make(0, 1.28f, 0))),
-                         mat4_scale(vec3_make(0.65f, 0.08f, 0.65f))), 0.35f, 1.0f, 0.30f, 1.0f, 0.85f);
+        draw_mesh(r, &r->mesh_cyl, mat4_mul(mat4_translate(vec3_add(bp, vec3_make(0, 0.64f, 0))),
+                  mat4_scale(vec3_make(0.76f, 1.24f, 0.76f))), 0.84f, 0.15f, 0.14f, 1.0f, 0.08f, 0.65f);
+        draw_mesh(r, &r->mesh_cyl, mat4_mul(mat4_translate(vec3_add(bp, vec3_make(0, 0.18f, 0))),
+                  mat4_scale(vec3_make(0.82f, 0.08f, 0.82f))), 0.32f, 0.34f, 0.38f, 1.0f, 0.04f, 0.90f);
+        draw_mesh(r, &r->mesh_cyl, mat4_mul(mat4_translate(vec3_add(bp, vec3_make(0, 0.64f, 0))),
+                  mat4_scale(vec3_make(0.81f, 0.14f, 0.81f))), 0.92f, 0.78f, 0.16f, 1.0f, 0.12f, 0.55f);
+        draw_mesh(r, &r->mesh_cyl, mat4_mul(mat4_translate(vec3_add(bp, vec3_make(0, 1.12f, 0))),
+                  mat4_scale(vec3_make(0.82f, 0.08f, 0.82f))), 0.32f, 0.34f, 0.38f, 1.0f, 0.04f, 0.90f);
+        draw_mesh(r, &r->mesh_cyl, mat4_mul(mat4_translate(vec3_add(bp, vec3_make(0, 1.27f, 0))),
+                  mat4_scale(vec3_make(0.64f, 0.05f, 0.64f))), 0.32f, 1.0f, 0.28f, 1.0f, 0.95f, 0.92f);
     }
 
-    /* Rolling Tomb Raider Boulders */
+    /* Craggy Multi-Sphere Rolling Tomb Raider Boulders */
     for (int i = 0; i < w->boulder_count; ++i) {
         if (!w->boulders[i].active) continue;
-        float rot = w->boulders[i].rolling ? w->time_sec * 5.0f : 0.0f;
-        Mat4 bm = mat4_mul(mat4_translate(w->boulders[i].pos),
-                  mat4_mul(mat4_rotate_x(rot), mat4_scale(vec3_make(2.4f, 2.4f, 2.4f))));
-        draw_colored_box(r, r->prog_world, bm, 0.62f, 0.56f, 0.46f, 1.0f, 0.05f);
+        float rot = w->boulders[i].rolling ? w->time_sec * 4.8f : 0.0f;
+        Mat4 broot = mat4_mul(mat4_translate(w->boulders[i].pos), mat4_rotate_x(rot));
+        draw_mesh(r, &r->mesh_sphere, mat4_mul(broot, mat4_scale(vec3_make(2.45f, 2.38f, 2.45f))),
+                  0.58f, 0.50f, 0.40f, 1.0f, 0.03f, 0.22f);
+        static const float lobes[4][3] = {{0.55f, 0.35f, 0.25f}, {-0.52f, -0.32f, 0.38f}, {0.20f, -0.45f, -0.48f}, {-0.38f, 0.48f, -0.32f}};
+        for (int k = 0; k < 4; ++k) {
+            draw_mesh(r, &r->mesh_sphere, mat4_mul(broot, mat4_mul(mat4_translate(vec3_make(lobes[k][0], lobes[k][1], lobes[k][2])),
+                      mat4_scale(vec3_make(1.45f, 1.35f, 1.45f)))), 0.50f, 0.43f, 0.35f, 1.0f, 0.02f, 0.18f);
+        }
     }
 
-    /* Glowing Green Magnesium Flares & Billowing CS Smoke Clouds */
+    /* Glowing Magnesium Flares & Billowing Multi-Sphere CS Smoke Clouds */
     for (int i = 0; i < WORLD_MAX_FLARES; ++i) {
         const FlareLight *fl = &w->flares[i];
         if (!fl->active) continue;
         if (fl->is_smoke) {
-            draw_colored_box(r, r->prog_world, mat4_mul(mat4_translate(vec3_add(fl->pos, vec3_make(0, 1.6f, 0))),
-                             mat4_scale(vec3_make(4.6f, 3.6f, 4.6f))), 0.78f, 0.82f, 0.86f, 0.78f, 0.12f);
+            static const float puffs[5][4] = {
+                {0.0f, 1.55f, 0.0f, 3.6f}, {1.25f, 1.25f, 0.75f, 2.8f}, {-1.20f, 1.30f, -0.65f, 2.7f},
+                {0.65f, 2.15f, -0.95f, 2.6f}, {-0.75f, 1.95f, 0.90f, 2.5f}
+            };
+            for (int k = 0; k < 5; ++k) {
+                float p = puffs[k][3] * (0.94f + 0.08f * sinf(w->time_sec * 1.8f + (float)k * 1.3f));
+                draw_mesh(r, &r->mesh_sphere, mat4_mul(mat4_translate(vec3_add(fl->pos, vec3_make(puffs[k][0], puffs[k][1], puffs[k][2]))),
+                          mat4_scale(vec3_make(p, p * 0.85f, p))), 0.80f, 0.83f, 0.88f, 0.52f, 0.08f, 0.08f);
+            }
         } else {
-            draw_colored_box(r, r->prog_world, mat4_mul(mat4_translate(fl->pos),
-                             mat4_scale(vec3_make(0.18f, 0.18f, 0.42f))), fl->r, fl->g, fl->b, 1.0f, 1.2f);
+            draw_mesh(r, &r->mesh_cyl, mat4_mul(mat4_translate(fl->pos), mat4_mul(rx90, mat4_scale(vec3_make(0.14f, 0.42f, 0.14f)))),
+                      0.22f, 0.65f, 0.30f, 1.0f, 0.25f, 0.55f);
+            draw_mesh(r, &r->mesh_sphere, mat4_mul(mat4_translate(vec3_add(fl->pos, vec3_make(0, 0.08f, 0.20f))),
+                      mat4_scale(vec3_make(0.28f, 0.28f, 0.28f))), fl->r, fl->g, fl->b, 1.0f, 1.45f, 0.9f);
         }
     }
 
-    /* Quake Thunderbolt live crackling lightning arc! */
+    /* Quake Thunderbolt live crackling lightning arc */
     for (int i = 0; i < w->player_count; ++i) {
         if (!w->players[i].active || w->players[i].lightning_timer <= 0.0f) continue;
         Vec3 a = vec3_add(player_eye_pos(&w->players[i]), vec3_scale(player_forward(&w->players[i]), 0.8f));
         Vec3 b = w->players[i].lightning_end;
-        for (int s = 1; s <= 8; ++s) {
-            Vec3 pt = vec3_lerp(a, b, (float)s / 8.0f);
-            float jit = sinf(w->time_sec * 45.0f + (float)s * 2.1f) * 0.14f;
-            draw_colored_box(r, r->prog_world, mat4_mul(mat4_translate(vec3_add(pt, vec3_make(jit, jit * 0.6f, 0))),
-                             mat4_scale(vec3_make(0.18f, 0.18f, 0.18f))), 0.45f, 0.94f, 1.0f, 0.95f, 1.3f);
+        for (int s = 1; s <= 10; ++s) {
+            Vec3 pt = vec3_lerp(a, b, (float)s / 10.0f);
+            float jit = sinf(w->time_sec * 52.0f + (float)s * 2.3f) * 0.16f;
+            float j2  = cosf(w->time_sec * 44.0f + (float)s * 1.9f) * 0.12f;
+            draw_mesh(r, &r->mesh_sphere, mat4_mul(mat4_translate(vec3_add(pt, vec3_make(jit, j2, 0))),
+                      mat4_scale(vec3_make(0.22f, 0.22f, 0.22f))), 0.48f, 0.94f, 1.0f, 0.95f, 1.50f, 0.9f);
         }
     }
 
-    /* Armed Laser Tripmines + Glowing Red Laser Beams */
+    /* Armed Laser Tripmines + Glowing Cylindrical Red Laser Beams */
     for (int i = 0; i < WORLD_MAX_TRIPMINES; ++i) {
         const Tripmine *tm = &w->tripmines[i];
         if (!tm->active) continue;
-        draw_colored_box(r, r->prog_world,
-                         mat4_mul(mat4_translate(tm->pos), mat4_scale(vec3_make(0.28f, 0.22f, 0.28f))),
-                         0.28f, 0.30f, 0.36f, 1.0f, 0.2f);
+        draw_mesh(r, &r->mesh_box, mat4_mul(mat4_translate(tm->pos), mat4_scale(vec3_make(0.28f, 0.22f, 0.28f))),
+                  0.30f, 0.34f, 0.40f, 1.0f, 0.10f, 0.85f);
+        draw_mesh(r, &r->mesh_sphere, mat4_mul(mat4_translate(vec3_add(tm->pos, vec3_scale(tm->normal, 0.12f))),
+                  mat4_scale(vec3_make(0.11f, 0.11f, 0.11f))), 1.0f, 0.12f, 0.16f, 1.0f, 1.35f, 0.95f);
         if (tm->arm_timer <= 0.0f) {
             Vec3 mid = vec3_lerp(tm->pos, tm->beam_end, 0.5f);
             float blen = vec3_dist(tm->pos, tm->beam_end);
-            Vec3 sc = (fabsf(tm->normal.x) > 0.5f) ? vec3_make(blen, 0.05f, 0.05f) :
-                      ((fabsf(tm->normal.z) > 0.5f) ? vec3_make(0.05f, 0.05f, blen) : vec3_make(0.05f, blen, 0.05f));
-            draw_colored_box(r, r->prog_world, mat4_mul(mat4_translate(mid), mat4_scale(sc)),
-                             1.0f, 0.12f, 0.15f, 0.85f, 1.2f);
+            Mat4 bm = mat4_translate(mid);
+            if (fabsf(tm->normal.x) > 0.5f) bm = mat4_mul(bm, mat4_mul(mat4_rotate_z_local(SW_PI * 0.5f), mat4_scale(vec3_make(0.045f, blen, 0.045f))));
+            else if (fabsf(tm->normal.z) > 0.5f) bm = mat4_mul(bm, mat4_mul(rx90, mat4_scale(vec3_make(0.045f, blen, 0.045f))));
+            else bm = mat4_mul(bm, mat4_scale(vec3_make(0.045f, blen, 0.045f)));
+            draw_mesh(r, &r->mesh_cyl, bm, 1.0f, 0.12f, 0.16f, 0.88f, 1.45f, 0.9f);
         }
     }
 
-    /* Co-op Player Avatars */
+    /* Sculpted Co-op Player Avatars with Festive Santa Hats */
     for (int i = 0; i < w->player_count; ++i) {
         if (i == viewer_slot || !w->players[i].active || w->players[i].hp <= 0) continue;
         Vec3 pp = w->players[i].pos;
         float sc = (w->players[i].self_shrunk_timer > 0.0f) ? 0.36f : 1.0f;
-        float colors[4][3] = {{0.2f,0.7f,1.0f},{1.0f,0.35f,0.35f},{0.35f,0.95f,0.45f},{1.0f,0.85f,0.25f}};
-        draw_colored_box(r, r->prog_world,
-                         mat4_mul(mat4_translate(vec3_add(pp, vec3_make(0, 0.75f * sc, 0))),
-                         mat4_mul(mat4_rotate_y(-w->players[i].yaw), mat4_scale(vec3_make(0.65f * sc, 1.15f * sc, 0.45f * sc)))),
-                         colors[i][0], colors[i][1], colors[i][2], 1.0f, 0.1f);
-        draw_colored_box(r, r->prog_world,
-                         mat4_mul(mat4_translate(vec3_add(pp, vec3_make(0, 1.55f * sc, 0))),
-                                  mat4_scale(vec3_make(0.45f * sc, 0.42f * sc, 0.45f * sc))),
-                         0.92f, 0.14f, 0.18f, 1.0f, 0.15f);
+        static const float colors[4][3] = {{0.22f,0.72f,1.0f},{1.0f,0.34f,0.34f},{0.34f,0.92f,0.44f},{1.0f,0.84f,0.24f}};
+        Mat4 pr = mat4_mul(mat4_translate(pp), mat4_rotate_y(-w->players[i].yaw));
+        draw_mesh(r, &r->mesh_cyl, mat4_mul(pr, mat4_mul(mat4_translate(vec3_make(0, 0.78f * sc, 0)),
+                  mat4_scale(vec3_make(0.62f * sc, 1.12f * sc, 0.48f * sc)))), colors[i][0], colors[i][1], colors[i][2], 1.0f, 0.08f, 0.55f);
+        draw_mesh(r, &r->mesh_sphere, mat4_mul(pr, mat4_mul(mat4_translate(vec3_make(0, 1.48f * sc, 0)),
+                  mat4_scale(vec3_make(0.42f * sc, 0.42f * sc, 0.42f * sc)))), 0.92f, 0.78f, 0.66f, 1.0f, 0.05f, 0.30f);
+        /* Festive Santa Hat */
+        draw_mesh(r, &r->mesh_cone, mat4_mul(pr, mat4_mul(mat4_translate(vec3_make(0, 1.82f * sc, 0)),
+                  mat4_scale(vec3_make(0.46f * sc, 0.44f * sc, 0.46f * sc)))), 0.90f, 0.14f, 0.18f, 1.0f, 0.12f, 0.30f);
+        draw_mesh(r, &r->mesh_sphere, mat4_mul(pr, mat4_mul(mat4_translate(vec3_make(0, 2.04f * sc, 0)),
+                  mat4_scale(vec3_make(0.14f * sc, 0.14f * sc, 0.14f * sc)))), 0.98f, 0.98f, 1.0f, 1.0f, 0.15f, 0.20f);
     }
 
-    /* 3. Enemies & Distinct 3D Act I Bosses */
+    /* 3. Sculpted 3D Bosses & 64x64 2-Frame Animated Enemy Sprites */
     for (int i = 0; i < WORLD_MAX_ENEMIES; ++i) {
         const Enemy *e = &w->enemies[i];
         if (!e->active) continue;
@@ -1304,127 +1873,121 @@ static void render_scene_view(GlRenderer *r, const GameWorld *w, Mat4 proj, Mat4
         float blind = (e->blind_timer > 0.0f) ? 0.8f : 0.0f;
 
         if (world_enemy_is_boss(e->kind)) {
-            float bob = 0.09f * sinf(e->anim_time * 5.0f);
-            float p3 = (w->boss_phase == 3) ? 0.35f : 0.0f;
-            float br = 0.78f, bg = 0.16f, bb = 0.20f;
-            if (e->kind == ENEMY_BOSS_TREX)       { br = 0.32f; bg = 0.56f; bb = 0.24f; }
-            else if (e->kind == ENEMY_BOSS_SHAMBLER)  { br = 0.86f; bg = 0.84f; bb = 0.90f; }
-            else if (e->kind == ENEMY_BOSS_MATRIARCH) { br = 0.46f; bg = 0.28f; bb = 0.52f; }
-            else if (e->kind == ENEMY_BOSS_CYBERTITAN){ br = 0.72f; bg = 0.36f; bb = 0.26f; }
-
-            draw_colored_box(r, r->prog_world,
-                             mat4_mul(mat4_translate(vec3_add(e->pos, vec3_make(0, 1.85f + bob, 0))),
-                             mat4_mul(mat4_rotate_y(-e->yaw), mat4_scale(vec3_make(2.0f, 1.65f, 1.55f)))),
-                             sw_clampf(br + fl * 0.25f + burn * 0.4f, 0, 1),
-                             sw_clampf(bg + fl * 0.4f + burn * 0.2f, 0, 1),
-                             sw_clampf(bb + fl * 0.4f, 0, 1), 1.0f, 0.22f + p3 + fl * 0.5f + burn * 0.5f);
-            draw_colored_box(r, r->prog_world,
-                             mat4_mul(mat4_translate(vec3_add(e->pos, vec3_make(-0.65f, 0.70f, 0))),
-                                      mat4_scale(vec3_make(0.52f, 1.4f, 0.65f))), 0.36f, 0.38f, 0.44f, 1.0f, 0.08f);
-            draw_colored_box(r, r->prog_world,
-                             mat4_mul(mat4_translate(vec3_add(e->pos, vec3_make(0.65f, 0.70f, 0))),
-                                      mat4_scale(vec3_make(0.52f, 1.4f, 0.65f))), 0.36f, 0.38f, 0.44f, 1.0f, 0.08f);
-            /* Head / Visor / Horns / Wings accent */
-            float er = (e->kind == ENEMY_BOSS_SHAMBLER) ? 0.35f : 1.0f;
-            float eg = (e->kind == ENEMY_BOSS_TREX) ? 0.92f : (e->kind == ENEMY_BOSS_SHAMBLER ? 0.90f : 0.22f);
-            float eb = (e->kind == ENEMY_BOSS_SHAMBLER) ? 1.0f : 0.18f;
-            draw_colored_box(r, r->prog_world,
-                             mat4_mul(mat4_translate(vec3_add(e->pos, vec3_make(0, 2.55f + bob, 0))),
-                                      mat4_scale(vec3_make(e->kind == ENEMY_BOSS_MATRIARCH ? 3.2f : 1.3f, 0.45f, 1.6f))),
-                             er, eg, eb, 1.0f, 0.95f);
+            draw_boss_3d(r, w, e, fl, burn);
         } else {
-            float sc = (e->shrunk_timer > 0.0f) ? 0.35f : 1.0f;
-            int tile = 0;
+            float sc = (e->shrunk_timer > 0.0f) ? 0.36f : 1.0f;
+            int col = SPR_ALIEN_TROOPER;
+            int frame = ((int)(e->anim_time * 4.5f)) & 1;
             float cr = 1.0f, cg = 1.0f, cb = 1.0f;
+            float w_sz = 1.38f, h_sz = 1.92f;
             switch (e->kind) {
-                case ENEMY_PIGGUARD:         tile = 1; break;
-                case ENEMY_OCTABRAIN:        tile = 8; break;
-                case ENEMY_TURRET:           tile = 9; break;
-                case ENEMY_WOLF:             tile = 1; cr = 0.78f; cg = 0.68f; cb = 0.56f; sc *= 0.80f; break;
-                case ENEMY_BAT:              tile = 8; cr = 0.62f; cg = 0.42f; cb = 0.78f; sc *= 0.72f; break;
-                case ENEMY_STONE_GUARD:      tile = 1; cr = 0.96f; cg = 0.82f; cb = 0.44f; break;
-                case ENEMY_SYNDICATE_RIFLE:  tile = 0; cr = 0.78f; cg = 0.76f; cb = 0.64f; break;
-                case ENEMY_SYNDICATE_SNIPER: tile = 1; cr = 0.58f; cg = 0.74f; cb = 0.92f; break;
-                case ENEMY_OGRE:             tile = 1; cr = 0.92f; cg = 0.72f; cb = 0.46f; break;
-                case ENEMY_FIEND:            tile = 0; cr = 0.94f; cg = 0.45f; cb = 0.34f; break;
-                case ENEMY_DEATH_KNIGHT:     tile = 1; cr = 0.65f; cg = 0.62f; cb = 0.76f; break;
-                case ENEMY_CULTIST:          tile = 0; cr = 0.98f; cg = 0.34f; cb = 0.34f; break;
-                case ENEMY_GHOUL:            tile = 1; cr = 0.68f; cg = 0.85f; cb = 0.68f; break;
-                case ENEMY_GARGOYLE:         tile = 8; cr = 0.72f; cg = 0.68f; cb = 0.76f; break;
-                case ENEMY_IMP:              tile = 0; cr = 0.96f; cg = 0.52f; cb = 0.34f; break;
-                case ENEMY_PINKY:            tile = 1; cr = 1.00f; cg = 0.46f; cb = 0.66f; break;
-                case ENEMY_CACODEMON:        tile = 8; cr = 1.00f; cg = 0.28f; cb = 0.28f; break;
+                case ENEMY_TROOPER:          col = SPR_ALIEN_TROOPER; break;
+                case ENEMY_PIGGUARD:         col = SPR_PIG_GUARD; w_sz = 1.48f; break;
+                case ENEMY_OCTABRAIN:        col = SPR_OCTABRAIN; w_sz = 1.50f; h_sz = 1.72f; break;
+                case ENEMY_TURRET:           col = SPR_TURRET; w_sz = 1.28f; h_sz = 1.55f; break;
+                case ENEMY_WOLF:             col = SPR_WOLF; w_sz = 1.35f; h_sz = 1.15f; break;
+                case ENEMY_BAT:              col = SPR_BAT; w_sz = 1.28f; h_sz = 1.10f; break;
+                case ENEMY_STONE_GUARD:      col = SPR_STONE_GUARD; w_sz = 1.52f; h_sz = 2.08f; break;
+                case ENEMY_SYNDICATE_RIFLE:  col = SPR_SYNDICATE; break;
+                case ENEMY_SYNDICATE_SNIPER: col = SPR_SYNDICATE; cr = 0.78f; cg = 0.90f; cb = 1.00f; break;
+                case ENEMY_OGRE:             col = SPR_OGRE_KNIGHT; w_sz = 1.58f; h_sz = 2.05f; break;
+                case ENEMY_FIEND:            col = SPR_FIEND_GHOUL; cr = 1.00f; cg = 0.80f; cb = 0.72f; w_sz = 1.50f; h_sz = 1.75f; break;
+                case ENEMY_DEATH_KNIGHT:     col = SPR_OGRE_KNIGHT; cr = 0.72f; cg = 0.74f; cb = 0.94f; w_sz = 1.52f; h_sz = 2.05f; break;
+                case ENEMY_CULTIST:          col = SPR_CULTIST; break;
+                case ENEMY_GHOUL:            col = SPR_FIEND_GHOUL; cr = 0.76f; cg = 0.96f; cb = 0.78f; break;
+                case ENEMY_GARGOYLE:         col = SPR_GARGOYLE; w_sz = 1.55f; h_sz = 1.85f; break;
+                case ENEMY_IMP:              col = SPR_IMP; break;
+                case ENEMY_PINKY:            col = SPR_PINKY; w_sz = 1.60f; h_sz = 1.82f; break;
+                case ENEMY_CACODEMON:        col = SPR_CACODEMON; w_sz = 1.75f; h_sz = 1.75f; break;
                 default: break;
             }
-            if (burn > 0.0f) { cr = 1.0f; cg = 0.55f; cb = 0.18f; }
+            if (burn > 0.0f) { cr = 1.0f; cg = 0.56f; cb = 0.18f; }
             if (blind > 0.0f){ cr = 1.0f; cg = 1.0f;  cb = 1.0f;  }
-            draw_billboard_sprite(r, e->pos, 1.25f * sc, 1.80f * sc, tile, cam_yaw,
-                                  cr, cg, cb, sw_clampf(fl * 0.7f + burn + blind, 0.0f, 1.2f));
+            draw_billboard_sprite(r, e->pos, w_sz * sc, h_sz * sc, col, frame, cam_yaw,
+                                  cr, cg, cb, sw_clampf(fl * 0.75f + burn + blind, 0.0f, 1.25f));
         }
     }
 
     if (w->decoy.active) {
-        draw_billboard_sprite(r, w->decoy.pos, 1.1f, 1.7f, 2, cam_yaw, 0.4f, 0.95f, 1.0f, 0.95f);
+        int df = ((int)(w->time_sec * 8.0f)) & 1;
+        draw_billboard_sprite(r, w->decoy.pos, 1.25f, 1.85f, SPR_HOLO_DECOY, df, cam_yaw, 0.45f, 0.96f, 1.0f, 1.05f);
     }
 
+    /* 4. Crisp 64x64 Pickups */
     for (int i = 0; i < WORLD_MAX_PICKUPS; ++i) {
         const Pickup *pk = &w->pickups[i];
         if (!pk->active) continue;
         Vec3 pos = vec3_add(pk->pos, vec3_make(0, 0.16f * sinf(pk->bob_phase), 0));
-        int tile = 4;
+        int col = SPR_FX_ORB, row = 0;
         float cr = 1.0f, cg = 1.0f, cb = 1.0f;
+        float sz = 0.92f;
         switch (pk->kind) {
-            case PICKUP_MEDKIT:      tile = 3; break;
+            case PICKUP_MEDKIT:      col = SPR_MEDKIT; row = 0; break;
             case PICKUP_SHOTGUN:
-            case PICKUP_WEAPON_GRANT:tile = 11; cr = 1.0f; cg = 0.92f; cb = 0.58f; break;
-            case PICKUP_KEY_BLUE:    tile = 10; cr = 0.25f; cg = 0.65f; cb = 1.0f; break;
-            case PICKUP_KEY_YELLOW:  tile = 10; cr = 1.0f;  cg = 0.92f; cb = 0.20f; break;
-            case PICKUP_KEY_RED:     tile = 10; cr = 1.0f;  cg = 0.25f; cb = 0.28f; break;
-            case PICKUP_SHARD:       tile = 6; break;
-            case PICKUP_QUAD:        tile = 6; cr = 0.25f; cg = 0.65f; cb = 1.0f; break;
-            case PICKUP_BERSERK:     tile = 3; cr = 1.0f;  cg = 0.20f; cb = 0.22f; break;
-            case PICKUP_RADSUIT:     tile = 4; cr = 0.30f; cg = 1.0f;  cb = 0.35f; break;
-            case PICKUP_CASH:        tile = 6; cr = 0.35f; cg = 1.0f;  cb = 0.45f; break;
+            case PICKUP_WEAPON_GRANT:col = SPR_SHARD_WEAPON; row = 1; sz = 1.10f; cr = 1.0f; cg = 0.96f; cb = 0.85f; break;
+            case PICKUP_KEY_BLUE:    col = SPR_KEYCARD; row = 0; cr = 0.25f; cg = 0.68f; cb = 1.0f; break;
+            case PICKUP_KEY_YELLOW:  col = SPR_KEYCARD; row = 0; cr = 1.0f;  cg = 0.92f; cb = 0.22f; break;
+            case PICKUP_KEY_RED:     col = SPR_KEYCARD; row = 0; cr = 1.0f;  cg = 0.25f; cb = 0.28f; break;
+            case PICKUP_SHARD:       col = SPR_SHARD_WEAPON; row = 0; sz = 1.15f; break;
+            case PICKUP_QUAD:        col = SPR_SHARD_WEAPON; row = 0; sz = 1.05f; cr = 0.25f; cg = 0.68f; cb = 1.0f; break;
+            case PICKUP_BERSERK:     col = SPR_MEDKIT; row = 0; cr = 1.0f;  cg = 0.22f; cb = 0.22f; break;
+            case PICKUP_RADSUIT:     col = SPR_FX_ORB; row = 0; cr = 0.30f; cg = 1.0f;  cb = 0.35f; break;
+            case PICKUP_CASH:        col = SPR_SHARD_WEAPON; row = 0; cr = 0.35f; cg = 1.0f; cb = 0.45f; break;
             case PICKUP_PIPEBOMB:    cr = 1.0f; cg = 0.40f; cb = 0.22f; break;
             case PICKUP_TRIPMINE:    cr = 1.0f; cg = 0.20f; cb = 0.30f; break;
-            case PICKUP_ARMOR:       cr = 0.35f; cg = 0.85f; cb = 1.0f; break;
-            case PICKUP_SHRINK_AMMO: cr = 0.30f; cg = 1.0f; cb = 0.40f; break;
+            case PICKUP_ARMOR:       cr = 0.35f; cg = 0.88f; cb = 1.0f; break;
+            case PICKUP_SHRINK_AMMO: cr = 0.30f; cg = 1.0f;  cb = 0.42f; break;
             default: break;
         }
-        draw_billboard_sprite(r, pos, 0.85f, 0.85f, tile, cam_yaw, cr, cg, cb, 0.78f);
+        draw_billboard_sprite(r, pos, sz, sz, col, row, cam_yaw, cr, cg, cb, 0.72f);
     }
 
+    /* 5. Sculpted 3D Projectiles & Glowing Orbs */
     for (int i = 0; i < WORLD_MAX_PROJECTILES; ++i) {
         const Projectile *pr = &w->projectiles[i];
         if (!pr->active) continue;
         if (pr->kind == PROJ_PIPEBOMB || pr->kind == PROJ_TNT_BUNDLE || pr->kind == PROJ_TNT_PROX ||
             pr->kind == PROJ_MOLOTOV || pr->kind == PROJ_FLASHBANG || pr->kind == PROJ_ENEMY_GRENADE) {
-            float cr = (pr->kind == PROJ_FLASHBANG) ? 0.85f : 0.95f;
-            float cg = (pr->kind == PROJ_FLASHBANG) ? 0.92f : 0.28f;
-            float cb = (pr->kind == PROJ_FLASHBANG) ? 1.0f  : 0.18f;
-            draw_colored_box(r, r->prog_world,
-                             mat4_mul(mat4_translate(pr->pos), mat4_scale(vec3_make(0.28f, 0.20f, 0.42f))),
-                             cr, cg, cb, 1.0f, 0.80f);
+            float cr = (pr->kind == PROJ_FLASHBANG) ? 0.85f : 0.94f;
+            float cg = (pr->kind == PROJ_FLASHBANG) ? 0.92f : 0.22f;
+            float cb = (pr->kind == PROJ_FLASHBANG) ? 1.00f : 0.16f;
+            Mat4 pm = mat4_mul(mat4_translate(pr->pos), mat4_mul(mat4_rotate_y(w->time_sec * 6.0f),
+                      mat4_mul(rx90, mat4_scale(vec3_make(0.22f, 0.42f, 0.22f)))));
+            draw_mesh(r, &r->mesh_cyl, pm, cr, cg, cb, 1.0f, 0.55f, 0.75f);
+        } else if (pr->kind == PROJ_PLAYER_ROCKET || pr->kind == PROJ_BOSS_ROCKET) {
+            draw_mesh(r, &r->mesh_sphere, mat4_mul(mat4_translate(pr->pos), mat4_scale(vec3_make(0.36f, 0.36f, 0.36f))),
+                      1.0f, 0.45f, 0.12f, 1.0f, 1.35f, 0.8f);
+            draw_billboard_sprite(r, vec3_sub(pr->pos, vec3_make(0, 0.35f, 0)), 0.75f, 0.75f, SPR_FX_ORB, 0, cam_yaw, 1.0f, 0.65f, 0.20f, 1.25f);
         } else if (pr->kind == PROJ_SHRINK_ORB || pr->kind == PROJ_BFG_ORB) {
-            float sz = (pr->kind == PROJ_BFG_ORB) ? 1.35f : 0.62f;
-            draw_billboard_sprite(r, pr->pos, sz, sz, 4, cam_yaw, 0.25f, 1.0f, 0.38f, 1.2f);
+            float sz = (pr->kind == PROJ_BFG_ORB) ? 1.40f : 0.65f;
+            draw_mesh(r, &r->mesh_sphere, mat4_mul(mat4_translate(pr->pos), mat4_scale(vec3_make(sz * 0.45f, sz * 0.45f, sz * 0.45f))),
+                      0.30f, 1.0f, 0.45f, 1.0f, 1.45f, 0.95f);
+            draw_billboard_sprite(r, vec3_sub(pr->pos, vec3_make(0, sz * 0.5f, 0)), sz, sz, SPR_FX_ORB, 0, cam_yaw, 0.25f, 1.0f, 0.38f, 1.25f);
         } else if (pr->kind == PROJ_OCTA_WAVE) {
-            draw_billboard_sprite(r, pr->pos, 0.70f, 0.70f, 4, cam_yaw, 0.85f, 0.30f, 1.0f, 1.05f);
+            draw_billboard_sprite(r, vec3_sub(pr->pos, vec3_make(0, 0.38f, 0)), 0.76f, 0.76f, SPR_FX_ORB, 0, cam_yaw, 0.85f, 0.30f, 1.0f, 1.15f);
         } else if (pr->kind == PROJ_NAIL) {
-            draw_billboard_sprite(r, pr->pos, 0.32f, 0.32f, 4, cam_yaw, 0.95f, 0.82f, 0.45f, 0.9f);
+            draw_mesh(r, &r->mesh_sphere, mat4_mul(mat4_translate(pr->pos), mat4_scale(vec3_make(0.16f, 0.16f, 0.16f))),
+                      0.96f, 0.82f, 0.42f, 1.0f, 0.85f, 0.92f);
         } else {
-            draw_billboard_sprite(r, pr->pos, 0.60f, 0.60f, 5, cam_yaw, 1.0f, 0.42f, 0.18f, 1.1f);
+            draw_billboard_sprite(r, vec3_sub(pr->pos, vec3_make(0, 0.34f, 0)), 0.68f, 0.68f, SPR_FX_ORB, 0, cam_yaw, 1.0f, 0.46f, 0.18f, 1.20f);
         }
     }
 
+    /* 6. Explosions & Atmospheric Ambient Particles */
     for (int i = 0; i < 8; ++i) {
         if (!w->explosions[i].active) continue;
         float t = w->explosions[i].timer / 0.45f;
-        float sz = w->explosions[i].radius * (1.35f - t * 0.5f);
-        draw_billboard_sprite(r, vec3_sub(w->explosions[i].pos, vec3_make(0, sz * 0.4f, 0)),
-                              sz, sz, 5, cam_yaw, w->explosions[i].r, w->explosions[i].g, w->explosions[i].b, 1.1f);
+        float sz = w->explosions[i].radius * (1.42f - t * 0.5f);
+        draw_mesh(r, &r->mesh_sphere, mat4_mul(mat4_translate(w->explosions[i].pos),
+                  mat4_scale(vec3_make(sz * 0.55f, sz * 0.55f, sz * 0.55f))),
+                  w->explosions[i].r, w->explosions[i].g, w->explosions[i].b, t * 0.85f, 1.55f, 0.2f);
+        draw_billboard_sprite(r, vec3_sub(w->explosions[i].pos, vec3_make(0, sz * 0.45f, 0)),
+                              sz, sz, SPR_FX_ORB, 0, cam_yaw, w->explosions[i].r, w->explosions[i].g, w->explosions[i].b, 1.35f);
     }
 
+    draw_ambient_particles(r, w, cam_pos);
+
+    /* 7. Sculpted First-Person Weapon Viewmodel */
     if (viewer_slot >= 0 && viewer_slot < w->player_count &&
         (w->scene == SCENE_DAY01 || (w->scene >= SCENE_DAY02 && w->scene <= SCENE_DAY06))) {
         const Player *p = &w->players[viewer_slot];
@@ -1434,7 +1997,10 @@ static void render_scene_view(GlRenderer *r, const GameWorld *w, Mat4 proj, Mat4
     }
 }
 
-/* Minimal 2D HUD batcher + 3x5 retro pixel font */
+/* ============================================================================
+ * 2D HUD BATCHER, MINIMAP & ADAPTIVE MOBILE TOUCH OVERLAY
+ * ============================================================================ */
+
 typedef struct { float x, y, r, g, b, a; } HudVert;
 static HudVert g_hud_buf[24576];
 static int g_hud_count = 0;
@@ -1462,7 +2028,7 @@ static const uint8_t *glyph_rows(char c) {
     static const uint8_t k4[5]={5,5,7,1,1}, k5[5]={7,4,7,1,7}, k6[5]={7,4,7,5,7}, k7[5]={7,1,1,2,2};
     static const uint8_t k8[5]={7,5,7,5,7}, k9[5]={7,5,7,1,7};
     static const uint8_t kColon[5]={0,2,0,2,0}, kSlash[5]={1,1,2,4,4}, kDash[5]={0,0,7,0,0}, kExcl[5]={2,2,2,0,2}, kDot[5]={0,0,0,0,2};
-    static const uint8_t kDollar[5]={7,6,7,3,7};
+    static const uint8_t kDollar[5]={2,7,6,3,7}, kLParen[5]={1,2,2,2,1}, kRParen[5]={4,2,2,2,4}, kAmp[5]={2,5,2,5,3}, kPlus[5]={0,2,7,2,0}, kApos[5]={2,2,0,0,0};
     if (c >= 'a' && c <= 'z') c = (char)(c - 'a' + 'A');
     switch (c) {
         case 'A': return kA; case 'B': return kB; case 'C': return kC; case 'D': return kD;
@@ -1477,6 +2043,8 @@ static const uint8_t *glyph_rows(char c) {
         case '8': return k8; case '9': return k9;
         case ':': return kColon; case '/': return kSlash; case '-': return kDash;
         case '!': return kExcl;  case '.': return kDot;   case '$': return kDollar;
+        case '(': return kLParen; case ')': return kRParen; case '&': return kAmp;
+        case '+': return kPlus;  case '\'': return kApos;
         default: return kSpace;
     }
 }
@@ -1517,8 +2085,8 @@ static void draw_minimap(const GameWorld *w, const Player *p, float aspect) {
     float my = (aspect < 1.0f) ? 0.145f : 0.19f;
 
     hud_rect(mx, my, mw, mh, 0.03f, 0.05f, 0.10f, 0.72f);
-    hud_rect(mx, my, mw, 0.003f * aspect, 0.2f, 0.85f, 1.0f, 0.7f);
-    hud_rect(mx, my + mh - 0.003f * aspect, mw, 0.003f * aspect, 0.2f, 0.85f, 1.0f, 0.7f);
+    hud_rect(mx, my, mw, 0.003f * aspect, 0.2f, 0.85f, 1.0f, 0.75f);
+    hud_rect(mx, my + mh - 0.003f * aspect, mw, 0.003f * aspect, 0.2f, 0.85f, 1.0f, 0.75f);
 
     float cx = mx + mw * 0.5f;
     float cy = my + mh * 0.5f;
@@ -1560,12 +2128,12 @@ static void draw_player_hud(GlRenderer *r, const GameWorld *w, int pi, int vw, i
     float ch_h = ch_w * aspect;
 
     /* Status & Tactical Overlays */
-    if (p->in_water)             hud_rect(0, 0, 1, 1, 0.08f, 0.42f, 0.68f, 0.22f);
-    if (p->quad_timer > 0.0f)    hud_rect(0, 0, 1, 1, 0.16f, 0.42f, 1.00f, 0.18f);
-    if (p->berserk_timer > 0.0f) hud_rect(0, 0, 1, 1, 0.95f, 0.12f, 0.12f, 0.22f);
-    if (p->rad_suit_timer > 0.0f)hud_rect(0, 0, 1, 1, 0.15f, 0.88f, 0.25f, 0.14f);
-    if (p->damage_flash > 0.0f)  hud_rect(0, 0, 1, 1, 0.9f, 0.1f, 0.1f, p->damage_flash * 0.6f);
-    if (p->stomp_flash > 0.0f)   hud_rect(0, 0, 1, 1, 0.2f, 1.0f, 0.35f, p->stomp_flash * 0.45f);
+    if (p->in_water)              hud_rect(0, 0, 1, 1, 0.08f, 0.42f, 0.68f, 0.22f);
+    if (p->quad_timer > 0.0f)     hud_rect(0, 0, 1, 1, 0.16f, 0.42f, 1.00f, 0.18f);
+    if (p->berserk_timer > 0.0f)  hud_rect(0, 0, 1, 1, 0.95f, 0.12f, 0.12f, 0.22f);
+    if (p->rad_suit_timer > 0.0f) hud_rect(0, 0, 1, 1, 0.15f, 0.88f, 0.25f, 0.14f);
+    if (p->damage_flash > 0.0f)   hud_rect(0, 0, 1, 1, 0.9f, 0.1f, 0.1f, p->damage_flash * 0.6f);
+    if (p->stomp_flash > 0.0f)    hud_rect(0, 0, 1, 1, 0.2f, 1.0f, 0.35f, p->stomp_flash * 0.45f);
     if (p->flash_blind_timer > 0.0f) hud_rect(0, 0, 1, 1, 1.0f, 1.0f, 1.0f, sw_clampf(p->flash_blind_timer, 0.0f, 0.85f));
 
     /* CS Sniper Scope Overlay OR Crosshair + Hitmarker */
@@ -1589,6 +2157,7 @@ static void draw_player_hud(GlRenderer *r, const GameWorld *w, int pi, int vw, i
     const char *top_msg = (w->banner_timer > 0.0f && w->banner[0] != '\0') ? w->banner : w->objective_text;
     if (top_msg && top_msg[0] != '\0') {
         hud_rect(0.025f, banner_y, 0.95f, px_h * 8.0f, 0.04f, 0.04f, 0.10f, 0.80f);
+        hud_rect(0.025f, banner_y, 0.95f, 0.0025f * aspect, 1.0f, 0.84f, 0.32f, 0.65f);
         hud_text(0.04f, banner_y + px_h * 1.6f, px_w * 0.84f, px_h * 0.84f, top_msg,
                  (w->banner_timer > 0.0f) ? 1.0f : 0.35f,
                  (w->banner_timer > 0.0f) ? 0.92f : 0.95f,
@@ -1617,6 +2186,7 @@ static void draw_player_hud(GlRenderer *r, const GameWorld *w, int pi, int vw, i
     float bar_h = px_h * 9.2f;
     float bar_y = ((aspect < 1.0f) ? 0.988f : 0.942f) - bar_h;
     hud_rect(0.02f, bar_y, 0.96f, bar_h, 0.05f, 0.05f, 0.11f, 0.84f);
+    hud_rect(0.02f, bar_y, 0.96f, 0.0025f * aspect, 0.24f, 0.88f, 1.0f, 0.65f);
 
     const char *wname = world_weapon_short_name(p->weapon);
     int cur_ammo = world_player_weapon_ammo(p, p->weapon);
@@ -1718,7 +2288,7 @@ void gl_renderer_render_frame(GlRenderer *r, GameWorld *w, const TouchController
         Vec3 fwd = player_forward(p);
         float aspect = (float)vw / (float)(vh > 0 ? vh : 1);
         float fovy = p->zoomed ? 28.0f : ((aspect < 1.0f) ? 85.0f : 70.0f);
-        Mat4 proj = mat4_perspective(fovy * SW_PI / 180.0f, aspect, 0.1f, 110.0f);
+        Mat4 proj = mat4_perspective(fovy * SW_PI / 180.0f, aspect, 0.1f, 120.0f);
         Mat4 view = mat4_look_at(eye, vec3_add(eye, fwd), vec3_make(0, 1, 0));
         render_scene_view(r, w, proj, view, eye, p->yaw, pi, light_vp, sun_dir);
 

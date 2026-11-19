@@ -16,12 +16,19 @@ typedef struct {
 } ChunkGpu;
 
 typedef struct {
+    GLuint vao;
+    GLuint vbo;
+    GLsizei vert_count;
+} MeshGpu;
+
+typedef struct {
     bool initialized;
     int retro_w;
     int retro_h;
     bool dither_enabled;
 
     /* Programs */
+    GLuint prog_sky;
     GLuint prog_shadow;
     GLuint prog_world;
     GLuint prog_post;
@@ -38,18 +45,26 @@ typedef struct {
     VoxelMesh scratch_mesh;
     ChunkGpu chunks[VOX_CHUNK_COUNT];
 
-    /* Shared Unit Cube (3D meshes) & Quad (billboards & fullscreen) */
-    GLuint cube_vao;
-    GLuint cube_vbo;
+    /* Pre-baked 3D Low-Poly Geometry Library (zero per-draw uploads!) */
+    MeshGpu mesh_box;
+    MeshGpu mesh_cyl;
+    MeshGpu mesh_sphere;
+    MeshGpu mesh_cone;
+
+    /* Dynamic Billboard Quad, Fullscreen Quad, 2D HUD */
+    GLuint bill_vao;
+    GLuint bill_vbo;
     GLuint quad_vao;
     GLuint quad_vbo;
     GLuint hud_vao;
     GLuint hud_vbo;
 
-    /* Procedural CC BY 4.0 Retro Pixel Texture Atlases */
-    GLuint voxel_atlas_tex;  /* 512x64 (16x2 tiles of 32x32) */
-    GLuint sprite_atlas_tex; /* 192x16 (12 tiles of 16x16) */
+    /* Procedural CC BY 4.0 High-Detail Retro Atlases */
+    GLuint voxel_atlas_tex;  /* 1024x192 (16x3 tiles of 64x64 diffuse) */
+    GLuint voxel_normal_tex; /* 1024x192 (16x3 tiles of 64x64 tangent normal + gloss) */
+    GLuint sprite_atlas_tex; /* 1280x128 (20x2 tiles of 64x64 animated sprites) */
     GLuint white_tex;
+    GLuint flat_normal_tex;
 } GlRenderer;
 
 bool gl_renderer_init(GlRenderer *r, int retro_w, int retro_h);

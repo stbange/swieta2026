@@ -436,7 +436,7 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char *argv[]) {
     }
     SDL_GL_SetSwapInterval(1);
 
-    if (!gl_renderer_init(&app->renderer, 400, 240)) {
+    if (!gl_renderer_init(&app->renderer, 640, 360)) {
         SDL_Log("gl_renderer_init failed");
         return SDL_APP_FAILURE;
     }
@@ -553,10 +553,15 @@ SDL_AppResult SDL_AppEvent(void *appstate, SDL_Event *ev) {
             } else if (ev->key.scancode == SDL_SCANCODE_F1) {
                 app->world.unlock_all = !app->world.unlock_all;
             } else if (ev->key.scancode == SDL_SCANCODE_F2) {
-                if (app->renderer.retro_w == 400) {
+                int maxd = app->renderer.retro_w > app->renderer.retro_h ? app->renderer.retro_w : app->renderer.retro_h;
+                if (maxd == 640) {
+                    gl_renderer_set_retro_res(&app->renderer, 960, 540);
+                } else if (maxd == 960) {
+                    gl_renderer_set_retro_res(&app->renderer, 480, 270);
+                } else if (maxd == 480) {
                     gl_renderer_set_retro_res(&app->renderer, 320, 240);
                 } else {
-                    gl_renderer_set_retro_res(&app->renderer, 400, 240);
+                    gl_renderer_set_retro_res(&app->renderer, 640, 360);
                 }
             } else if (ev->key.scancode == SDL_SCANCODE_F3) {
                 int next = (app->world.player_count == 1) ? 2 : (app->world.player_count == 2 ? 4 : 1);

@@ -251,6 +251,19 @@ void voxel_type_color(uint8_t type, float out_rgba[4], float *out_emissive) {
         case VOX_SEAT:         r = 0.92f; g = 0.28f; b = 0.32f; break;
         case VOX_GIFT:         r = 1.00f; g = 0.92f; b = 0.88f; e = 0.15f; break;
         case VOX_RELAY_CORE:   r = 1.00f; g = 0.22f; b = 0.42f; e = 0.95f; break;
+        case VOX_SANDSTONE:    r = 0.98f; g = 0.94f; b = 0.88f; break;
+        case VOX_WATER:        r = 0.78f; g = 0.96f; b = 1.00f; a = 0.78f; e = 0.18f; break;
+        case VOX_LAVA:         r = 1.00f; g = 0.86f; b = 0.65f; e = 1.15f; break;
+        case VOX_SLIME:        r = 0.85f; g = 1.00f; b = 0.75f; e = 0.88f; break;
+        case VOX_RUST_BRASS:   r = 0.96f; g = 0.90f; b = 0.84f; break;
+        case VOX_CRATE:        r = 0.96f; g = 0.92f; b = 0.86f; break;
+        case VOX_DOOR_YELLOW:  r = 1.00f; g = 0.92f; b = 0.42f; e = 0.35f; break;
+        case VOX_RED_CARNIVAL: r = 0.98f; g = 0.94f; b = 0.92f; break;
+        case VOX_CRYPT_STONE:  r = 0.90f; g = 0.90f; b = 0.96f; break;
+        case VOX_TECH_WALL:    r = 0.92f; g = 0.94f; b = 0.98f; break;
+        case VOX_PUSH_BLOCK:   r = 1.00f; g = 0.95f; b = 0.82f; e = 0.14f; break;
+        case VOX_SPIKES:       r = 0.92f; g = 0.92f; b = 0.95f; break;
+        case VOX_SLIPGATE:     r = 0.92f; g = 0.78f; b = 1.00f; e = 0.95f; break;
         default: break;
     }
     out_rgba[0] = r;
