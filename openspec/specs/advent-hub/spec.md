@@ -30,3 +30,10 @@ The system SHALL place players in the 3D Grand Festive Hall containing 24 identi
 #### Scenario: Returning with a collected Memory Shard
 - **WHEN** a player completes Day 1 and returns to the Grand Festive Hall
 - **THEN** Memory Shard #1 is recorded as collected, the Grand Tree ornament #1 is illuminated, and progress persists
+
+### Requirement: Vaulted Grand Hall Cathedral and Cycling SANTA-BIOS Logs
+The Grand Festive Hall SHALL occupy an expanded vaulted cathedral with distinct ornament lights corresponding to individual Memory Shards (1–24) and interactive SANTA-BIOS terminal entries cycling through 1999 LAN-party story logs.
+
+#### Scenario: Cycling SANTA-BIOS 1999 LAN logs
+- **WHEN** a player repeatedly interacts with the SANTA-BIOS terminal in the Grand Festive Hall
+- **THEN** each interaction advances to the next 1999 LAN-party archive log entry and wraps around cleanly

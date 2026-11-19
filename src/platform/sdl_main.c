@@ -443,13 +443,18 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char *argv[]) {
 
     /* Default to unlock_all=true during playtest development (can toggle with F1 or UI) */
     bool unlock_all = true;
+    int start_day = 0;
     for (int i = 1; i < argc; ++i) {
         if (strcmp(argv[i], "--strict-calendar") == 0) unlock_all = false;
         if (strcmp(argv[i], "--unlock-all") == 0) unlock_all = true;
+        if (strncmp(argv[i], "--day=", 6) == 0) start_day = atoi(argv[i] + 6);
     }
 
     world_init(&app->world, get_current_datetime(), unlock_all, 1);
     load_progress(app);
+    if (start_day >= 1 && start_day <= SWIETA_PORTAL_COUNT) {
+        world_load_day(&app->world, start_day);
+    }
     touch_init(&app->touch);
     retro_audio_init(&app->audio);
     refresh_gamepads(app);
@@ -523,11 +528,19 @@ SDL_AppResult SDL_AppEvent(void *appstate, SDL_Event *ev) {
             } else if (ev->key.scancode == SDL_SCANCODE_1) {
                 app->pending_weapon = WEAP_PISTOL;
             } else if (ev->key.scancode == SDL_SCANCODE_2) {
-                app->pending_weapon = WEAP_SHRINKER;
+                if (app->world.players[0].has_shotgun) app->pending_weapon = WEAP_SHOTGUN;
             } else if (ev->key.scancode == SDL_SCANCODE_3) {
+                app->pending_weapon = WEAP_SHRINKER;
+            } else if (ev->key.scancode == SDL_SCANCODE_4) {
                 app->pending_weapon = WEAP_PIPEBOMB;
+            } else if (ev->key.scancode == SDL_SCANCODE_5) {
+                app->pending_weapon = WEAP_TRIPMINE;
             } else if (ev->key.scancode == SDL_SCANCODE_TAB) {
-                app->pending_weapon = (app->world.players[0].weapon + 1) % WEAP_COUNT;
+                int next = (app->world.players[0].weapon + 1) % WEAP_COUNT;
+                if (next == WEAP_SHOTGUN && !app->world.players[0].has_shotgun) {
+                    next = WEAP_SHRINKER;
+                }
+                app->pending_weapon = next;
             } else if (ev->key.scancode == SDL_SCANCODE_H) {
                 world_load_hub(&app->world);
             } else if (ev->key.scancode == SDL_SCANCODE_M) {

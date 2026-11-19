@@ -9,6 +9,13 @@
 #include <stdint.h>
 
 typedef struct {
+    GLuint vao;
+    GLuint vbo;
+    GLuint ebo;
+    GLsizei index_count;
+} ChunkGpu;
+
+typedef struct {
     bool initialized;
     int retro_w;
     int retro_h;
@@ -27,11 +34,9 @@ typedef struct {
     GLuint retro_color_tex;
     GLuint retro_depth_tex;
 
-    /* Dynamic Voxel Mesh VAO/VBO/EBO */
-    VoxelMesh voxel_mesh;
-    GLuint voxel_vao;
-    GLuint voxel_vbo;
-    GLuint voxel_ebo;
+    /* Chunked Voxel GPU Buffers + Reusable Scratch CPU Mesh */
+    VoxelMesh scratch_mesh;
+    ChunkGpu chunks[VOX_CHUNK_COUNT];
 
     /* Shared Unit Cube (3D meshes) & Quad (billboards & fullscreen) */
     GLuint cube_vao;
@@ -41,8 +46,9 @@ typedef struct {
     GLuint hud_vao;
     GLuint hud_vbo;
 
-    /* Procedural Retro Pixel-Art Texture Atlas (8x2 tiles of 16x16 = 128x32) */
-    GLuint sprite_atlas_tex;
+    /* Procedural CC BY 4.0 Retro Pixel Texture Atlases */
+    GLuint voxel_atlas_tex;  /* 512x64 (16x2 tiles of 32x32) */
+    GLuint sprite_atlas_tex; /* 192x16 (12 tiles of 16x16) */
     GLuint white_tex;
 } GlRenderer;
 

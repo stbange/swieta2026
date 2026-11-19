@@ -29,16 +29,20 @@ static void add_voice(RetroAudioSynth *s, float freq, float slide, float dur, fl
 void retro_audio_trigger_events(RetroAudioSynth *synth, uint32_t ev) {
     if (!synth || ev == 0u) return;
     if (ev & SFX_PISTOL)  add_voice(synth, 620.0f, -1800.0f, 0.09f, 0.28f, 2);
+    if (ev & SFX_SHOTGUN) add_voice(synth, 240.0f,  -620.0f, 0.24f, 0.42f, 2);
     if (ev & SFX_SHRINK)  add_voice(synth, 1100.0f, -750.0f, 0.28f, 0.24f, 0);
-    if (ev & SFX_STOMP)   add_voice(synth, 160.0f, -120.0f,  0.18f, 0.35f, 1);
-    if (ev & SFX_THROW)   add_voice(synth, 320.0f,  240.0f,  0.12f, 0.20f, 3);
-    if (ev & SFX_EXPLODE) add_voice(synth, 110.0f,  -85.0f,  0.42f, 0.42f, 2);
-    if (ev & SFX_JETPACK) add_voice(synth, 190.0f,   20.0f,  0.07f, 0.10f, 2);
-    if (ev & SFX_PICKUP)  add_voice(synth, 523.0f,  680.0f,  0.16f, 0.22f, 0);
-    if (ev & SFX_SWITCH)  add_voice(synth, 440.0f,  440.0f,  0.14f, 0.24f, 0);
-    if (ev & SFX_PORTAL)  add_voice(synth, 280.0f,  520.0f,  0.35f, 0.26f, 3);
-    if (ev & SFX_HURT)    add_voice(synth, 220.0f, -180.0f,  0.22f, 0.30f, 1);
-    if (ev & SFX_SHARD)   add_voice(synth, 587.0f,  880.0f,  0.55f, 0.32f, 3);
+    if (ev & SFX_STOMP)   add_voice(synth, 160.0f,  -120.0f, 0.18f, 0.35f, 1);
+    if (ev & SFX_THROW)   add_voice(synth, 320.0f,   240.0f, 0.12f, 0.20f, 3);
+    if (ev & SFX_EXPLODE) add_voice(synth, 110.0f,   -85.0f, 0.42f, 0.42f, 2);
+    if (ev & SFX_JETPACK) add_voice(synth, 190.0f,    20.0f, 0.07f, 0.10f, 2);
+    if (ev & SFX_PICKUP)  add_voice(synth, 523.0f,   680.0f, 0.16f, 0.22f, 0);
+    if (ev & SFX_SWITCH)  add_voice(synth, 440.0f,   440.0f, 0.14f, 0.24f, 0);
+    if (ev & SFX_PORTAL)  add_voice(synth, 280.0f,   520.0f, 0.35f, 0.26f, 3);
+    if (ev & SFX_HURT)    add_voice(synth, 220.0f,  -180.0f, 0.22f, 0.30f, 1);
+    if (ev & SFX_SHARD)   add_voice(synth, 587.0f,   880.0f, 0.55f, 0.32f, 3);
+    if (ev & SFX_GLASS)   add_voice(synth, 1800.0f, -900.0f, 0.15f, 0.26f, 2);
+    if (ev & SFX_DOOR)    add_voice(synth, 140.0f,   110.0f, 0.26f, 0.22f, 1);
+    if (ev & SFX_SECRET)  add_voice(synth, 659.0f,   980.0f, 0.40f, 0.28f, 3);
 }
 
 static float next_noise(RetroAudioSynth *s) {

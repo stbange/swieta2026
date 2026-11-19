@@ -8,6 +8,12 @@
 #include "render/voxel_mesher.h"
 #include "sim/world.h"
 
+#include <string.h>
+
+/* Static storage keeps test stacks tiny across Windows/Linux/macOS */
+static VoxelWorld g_test_vw;
+static GameWorld g_test_world;
+
 static void test_math3d_vectors_and_angles(void) {
     ASSERT_NEAR(sw_clampf(-5.0f, 0.0f, 10.0f), 0.0f, 1e-5f);
     ASSERT_NEAR(sw_clampf(15.0f, 0.0f, 10.0f), 10.0f, 1e-5f);
@@ -128,46 +134,96 @@ static void test_calendar_gating_and_progress(void) {
     ASSERT_EQ_INT(swieta_progress_count_shards(0x00000007u), 3);
 }
 
-static void test_voxel_world_and_mesher(void) {
-    VoxelWorld vw;
-    voxel_world_clear(&vw);
+static void test_voxel_world_and_chunked_mesher(void) {
+    VoxelWorld *vw = &g_test_vw;
+    voxel_world_clear(vw);
     ASSERT_FALSE(voxel_in_bounds(-1, 0, 0));
-    ASSERT_EQ_INT(voxel_get(&vw, -1, 0, 0), VOX_AIR);
+    ASSERT_FALSE(voxel_in_bounds(VOX_WORLD_X, 0, 0));
+    ASSERT_EQ_INT(voxel_get(vw, -1, 0, 0), VOX_AIR);
 
-    /* 3x3x3 solid cube -> center cell has 0 exposed faces; outer 26 cells have 54 faces */
-    voxel_fill_box(&vw, 6, 4, 6, 4, 2, 4, VOX_STONE);
-    ASSERT_TRUE(voxel_is_solid(&vw, 5, 3, 5));
+    /* Chunk index / coordinate round-trip */
+    int idx = voxel_chunk_index(3, 1, 5);
+    int cx = 0, cy = 0, cz = 0;
+    voxel_chunk_coords(idx, &cx, &cy, &cz);
+    ASSERT_EQ_INT(cx, 3);
+    ASSERT_EQ_INT(cy, 1);
+    ASSERT_EQ_INT(cz, 5);
+
+    /* 3x3x3 solid cube inside chunk (0,0,0) -> 54 exposed faces */
+    voxel_fill_box(vw, 6, 4, 6, 4, 2, 4, VOX_STONE);
+    ASSERT_TRUE(voxel_is_solid(vw, 5, 3, 5));
+    ASSERT_TRUE(voxel_is_opaque(VOX_STONE));
+    ASSERT_FALSE(voxel_is_opaque(VOX_GLASS));
+    ASSERT_FALSE(voxel_is_opaque(VOX_AIR));
 
     VoxelMesh mesh;
     voxel_mesh_init(&mesh);
-    ASSERT_TRUE(voxel_build_mesh(&vw, &mesh));
+    ASSERT_TRUE(voxel_build_mesh(vw, &mesh));
     ASSERT_EQ_INT((int)mesh.vertex_count, 54 * 4);
     ASSERT_EQ_INT((int)mesh.index_count, 54 * 6);
 
-    /* Cracked destruction + replace_all + raycast */
-    voxel_fill_box(&vw, 10, 1, 10, 12, 3, 10, VOX_CRACKED);
-    int blown = voxel_explode_cracked(&vw, vec3_make(11.5f, 2.5f, 10.5f), 2.5f);
-    ASSERT_TRUE(blown > 0);
-    ASSERT_EQ_INT(voxel_explode_cracked(&vw, vec3_make(11.5f, 2.5f, 10.5f), -1.0f), 0);
+    /* Per-chunk build & invalid chunk index */
+    ASSERT_TRUE(voxel_build_chunk_mesh(vw, voxel_chunk_index(0, 0, 0), &mesh));
+    ASSERT_EQ_INT((int)mesh.vertex_count, 54 * 4);
+    ASSERT_FALSE(voxel_build_chunk_mesh(vw, -1, &mesh));
+    ASSERT_FALSE(voxel_build_chunk_mesh(vw, VOX_CHUNK_COUNT, &mesh));
 
-    voxel_set(&vw, 20, 2, 20, VOX_CINEMA_STATIC);
-    ASSERT_EQ_INT(voxel_replace_all(&vw, VOX_CINEMA_STATIC, VOX_CINEMA_LIT), 1);
-    ASSERT_EQ_INT(voxel_replace_all(&vw, VOX_CINEMA_LIT, VOX_CINEMA_LIT), 0);
+    /* Seam-aware chunk dirtying across chunk borders (x=15/16, y=15/16, z=15/16) */
+    memset(vw->chunk_dirty, 0, sizeof(vw->chunk_dirty));
+    voxel_set(vw, 15, 15, 15, VOX_WOOD);
+    ASSERT_TRUE(vw->chunk_dirty[voxel_chunk_index(0, 0, 0)]);
+    ASSERT_TRUE(vw->chunk_dirty[voxel_chunk_index(1, 0, 0)]);
+    ASSERT_TRUE(vw->chunk_dirty[voxel_chunk_index(0, 1, 0)]);
+    ASSERT_TRUE(vw->chunk_dirty[voxel_chunk_index(0, 0, 1)]);
 
-    /* Hit every material color path */
-    for (uint8_t t = 0; t <= VOX_CINEMA_LIT + 1; ++t) {
+    memset(vw->chunk_dirty, 0, sizeof(vw->chunk_dirty));
+    voxel_set(vw, 16, 16, 16, VOX_MIRROR);
+    ASSERT_TRUE(vw->chunk_dirty[voxel_chunk_index(1, 1, 1)]);
+    ASSERT_TRUE(vw->chunk_dirty[voxel_chunk_index(0, 1, 1)]);
+    ASSERT_TRUE(vw->chunk_dirty[voxel_chunk_index(1, 0, 1)]);
+    ASSERT_TRUE(vw->chunk_dirty[voxel_chunk_index(1, 1, 0)]);
+
+    /* Cracked wall destruction + Breakable glass destruction + replace_all */
+    voxel_fill_box(vw, 20, 1, 20, 22, 3, 20, VOX_CRACKED);
+    ASSERT_TRUE(voxel_explode_cracked(vw, vec3_make(21.5f, 2.5f, 20.5f), 2.5f) > 0);
+    ASSERT_EQ_INT(voxel_explode_cracked(vw, vec3_make(21.5f, 2.5f, 20.5f), -1.0f), 0);
+
+    voxel_fill_box(vw, 30, 1, 30, 32, 3, 30, VOX_GLASS);
+    ASSERT_TRUE(voxel_break_glass(vw, vec3_make(31.5f, 2.5f, 30.5f), 2.0f) > 0);
+    ASSERT_EQ_INT(voxel_break_glass(vw, vec3_make(31.5f, 2.5f, 30.5f), -1.0f), 0);
+
+    voxel_set(vw, 40, 2, 40, VOX_CINEMA_STATIC);
+    ASSERT_EQ_INT(voxel_replace_all(vw, VOX_CINEMA_STATIC, VOX_CINEMA_LIT), 1);
+    ASSERT_EQ_INT(voxel_replace_all(vw, VOX_CINEMA_LIT, VOX_CINEMA_LIT), 0);
+
+    /* Cover every material color & atlas tile path (0..VOX_TYPE_COUNT) */
+    for (uint8_t t = 0; t <= VOX_TYPE_COUNT; ++t) {
         float rgba[4];
         float em = 0.0f;
         voxel_type_color(t, rgba, &em);
-        ASSERT_NEAR(rgba[3], 1.0f, 1e-5f);
+        ASSERT_TRUE(rgba[3] > 0.0f && rgba[3] <= 1.0f);
+        int tile = voxel_type_atlas_tile(t);
+        ASSERT_TRUE(tile >= 0 && tile < VOX_ATLAS_COLS * VOX_ATLAS_ROWS);
     }
+
+    /* Extended raycast normals (X, Y, Z hits) + legacy raycast wrapper */
+    VoxelRayHit rh;
+    ASSERT_TRUE(voxel_raycast_ext(vw, vec3_make(2.0f, 3.5f, 5.5f), vec3_make(1, 0, 0), 10.0f, &rh));
+    ASSERT_NEAR(rh.normal.x, -1.0f, 1e-4f);
+    ASSERT_EQ_INT(rh.type, VOX_STONE);
+
+    ASSERT_TRUE(voxel_raycast_ext(vw, vec3_make(5.5f, 7.0f, 5.5f), vec3_make(0, -1, 0), 10.0f, &rh));
+    ASSERT_NEAR(rh.normal.y, 1.0f, 1e-4f);
+
+    ASSERT_TRUE(voxel_raycast_ext(vw, vec3_make(5.5f, 3.5f, 9.0f), vec3_make(0, 0, -1), 10.0f, &rh));
+    ASSERT_NEAR(rh.normal.z, 1.0f, 1e-4f);
 
     float dist = 0.0f;
     Vec3 hit = vec3_make(0, 0, 0);
-    ASSERT_TRUE(voxel_raycast(&vw, vec3_make(2.0f, 3.5f, 5.5f), vec3_make(1, 0, 0), 10.0f, &dist, &hit));
+    ASSERT_TRUE(voxel_raycast(vw, vec3_make(2.0f, 3.5f, 5.5f), vec3_make(1, 0, 0), 10.0f, &dist, &hit));
     ASSERT_TRUE(dist > 1.5f && dist < 3.0f);
-    ASSERT_FALSE(voxel_raycast(&vw, vec3_make(2.0f, 3.5f, 5.5f), vec3_make(0, 0, 0), 10.0f, &dist, &hit));
-    ASSERT_FALSE(voxel_raycast(&vw, vec3_make(2.0f, 3.5f, 5.5f), vec3_make(-1, 0, 0), 5.0f, &dist, &hit));
+    ASSERT_FALSE(voxel_raycast(vw, vec3_make(2.0f, 3.5f, 5.5f), vec3_make(0, 0, 0), 10.0f, &dist, &hit));
+    ASSERT_FALSE(voxel_raycast(vw, vec3_make(2.0f, 3.5f, 5.5f), vec3_make(-1, 0, 0), 5.0f, &dist, &hit));
     ASSERT_FALSE(voxel_build_mesh(NULL, &mesh));
 
     voxel_mesh_free(&mesh);
@@ -193,7 +249,6 @@ static void test_net_proto_and_room_codes(void) {
     ASSERT_TRUE(net_decode_input(buf, n, &out_in));
     ASSERT_EQ_INT(out_in.seq, 77);
     ASSERT_NEAR(out_in.move_y, -0.75f, 1e-5f);
-    /* Corrupt CRC */
     buf[n - 1] ^= 0xFFu;
     ASSERT_FALSE(net_decode_input(buf, n, &out_in));
 
@@ -238,17 +293,15 @@ static void test_touch_controller(void) {
     const TouchButtonRect *btns = touch_get_layout(&btn_count);
     ASSERT_TRUE(btn_count >= 6 && btns != NULL);
 
-    /* Finger 1: left virtual stick pushed forward-right into sprint zone */
     touch_on_down(&tc, 10, 0.16f, 0.76f);
     ASSERT_TRUE(tc.enabled);
     ASSERT_TRUE(tc.stick_active);
-    touch_on_move(&tc, 10, 0.165f, 0.755f); /* inside deadzone */
+    touch_on_move(&tc, 10, 0.165f, 0.755f);
     ASSERT_NEAR(tc.move_y, 0.0f, 1e-4f);
-    touch_on_move(&tc, 10, 0.30f, 0.50f); /* outer ring sprint */
+    touch_on_move(&tc, 10, 0.30f, 0.50f);
     ASSERT_TRUE(tc.sprint);
     ASSERT_TRUE(tc.move_y > 0.5f);
 
-    /* Finger 2: right swipe look */
     touch_on_down(&tc, 20, 0.55f, 0.35f);
     touch_on_move(&tc, 20, 0.65f, 0.30f);
     float dx = 0.0f, dy = 0.0f;
@@ -256,13 +309,11 @@ static void test_touch_controller(void) {
     ASSERT_TRUE(dx > 0.2f);
     ASSERT_TRUE(dy < 0.0f);
 
-    /* Finger 3: Fire button press & release */
     touch_on_down(&tc, 30, btns[0].cx, btns[0].cy);
     ASSERT_TRUE((tc.buttons & TOUCH_BTN_FIRE) != 0u);
     touch_on_up(&tc, 30);
     ASSERT_TRUE((tc.buttons & TOUCH_BTN_FIRE) == 0u);
 
-    /* Re-using existing finger id & disabling resets state */
     touch_on_down(&tc, 10, 0.16f, 0.76f);
     touch_on_up(&tc, 20);
     touch_set_enabled(&tc, false);
@@ -273,9 +324,9 @@ static void test_touch_controller(void) {
 static void test_retro_audio_synth(void) {
     RetroAudioSynth synth;
     retro_audio_init(&synth);
-    retro_audio_trigger_events(&synth, SFX_PISTOL | SFX_SHRINK | SFX_STOMP | SFX_THROW |
+    retro_audio_trigger_events(&synth, SFX_PISTOL | SFX_SHOTGUN | SFX_SHRINK | SFX_STOMP | SFX_THROW |
                                        SFX_EXPLODE | SFX_JETPACK | SFX_PICKUP | SFX_SWITCH |
-                                       SFX_PORTAL | SFX_HURT | SFX_SHARD);
+                                       SFX_PORTAL | SFX_HURT | SFX_SHARD | SFX_GLASS | SFX_DOOR | SFX_SECRET);
     float buf[256];
     retro_audio_render_samples(&synth, SCENE_HUB, 3, buf, 256);
     float energy = 0.0f;
@@ -290,80 +341,146 @@ static void test_retro_audio_synth(void) {
 
 static void test_world_hub_preview_and_combat_edges(void) {
     SwietaDateTime nov = {2026, 11, 19, 12, 0, 0};
-    GameWorld w;
-    world_init(&w, nov, false, 1);
-    ASSERT_EQ_INT(w.scene, SCENE_HUB);
+    GameWorld *w = &g_test_world;
+    world_init(w, nov, false, 1);
+    ASSERT_EQ_INT(w->scene, SCENE_HUB);
 
     /* Locked portal cannot be entered when unlock_all=false */
-    world_load_day(&w, 1);
-    ASSERT_EQ_INT(w.scene, SCENE_HUB);
+    world_load_day(w, 1);
+    ASSERT_EQ_INT(w->scene, SCENE_HUB);
 
     /* Vertical grounding stability: zero bounce while standing still or walking on flat floor */
     PlayerInput in[WORLD_MAX_PLAYERS];
     memset(in, 0, sizeof(in));
     for (int i = 0; i < WORLD_MAX_PLAYERS; ++i) in[i].select_weapon = -1;
     for (int t = 0; t < 30; ++t) {
-        world_step(&w, in, WORLD_FIXED_DT);
-        ASSERT_NEAR(w.players[0].pos.y, 1.0f, 0.015f);
-        ASSERT_TRUE(w.players[0].on_ground);
+        world_step(w, in, WORLD_FIXED_DT);
+        ASSERT_NEAR(w->players[0].pos.y, 1.0f, 0.015f);
+        ASSERT_TRUE(w->players[0].on_ground);
     }
     in[0].move_y = 1.0f;
     for (int t = 0; t < 20; ++t) {
-        world_step(&w, in, WORLD_FIXED_DT);
-        ASSERT_NEAR(w.players[0].pos.y, 1.0f, 0.015f);
-        ASSERT_TRUE(w.players[0].on_ground);
+        world_step(w, in, WORLD_FIXED_DT);
+        ASSERT_NEAR(w->players[0].pos.y, 1.0f, 0.015f);
+        ASSERT_TRUE(w->players[0].on_ground);
     }
     in[0].move_y = 0.0f;
 
-    /* Jump + ceiling clamp test */
-    w.players[0].pos = vec3_make(22.5f, 10.2f, 34.0f);
-    w.players[0].on_ground = true;
+    /* Jump + ceiling clamp test against Hub vaulted ceiling (y=16) */
+    w->players[0].pos = vec3_make(62.5f, 14.2f, 84.5f);
+    w->players[0].on_ground = true;
     in[0].buttons = INP_JUMP;
-    world_step(&w, in, WORLD_FIXED_DT);
-    ASSERT_TRUE(w.players[0].pos.y <= 10.30f);
+    world_step(w, in, WORLD_FIXED_DT);
+    ASSERT_TRUE(w->players[0].pos.y <= 14.30f);
     in[0].buttons = 0;
 
-    /* Interacting with SANTA-BIOS terminal */
-    w.players[0].pos = vec3_make(24.0f, 1.0f, 18.0f);
-    in[0].buttons = INP_USE;
-    world_step(&w, in, WORLD_FIXED_DT);
-    ASSERT_TRUE((w.sound_events & SFX_SWITCH) != 0u);
+    /* Cycle all 6 SANTA-BIOS 1999 terminal logs */
+    w->players[0].pos = w->santa_bios_pos;
+    for (int k = 0; k < 6; ++k) {
+        in[0].buttons = INP_USE;
+        world_step(w, in, WORLD_FIXED_DT);
+        ASSERT_TRUE((w->sound_events & SFX_SWITCH) != 0u);
+        in[0].buttons = 0;
+        world_step(w, in, WORLD_FIXED_DT);
+    }
+    ASSERT_EQ_INT(w->santa_log_index, 0);
 
     /* Unlock-all enters preview Day 15 (Magic Carpet 2) & collects preview shard & returns */
-    w.unlock_all = true;
-    world_load_day(&w, 15);
-    ASSERT_EQ_INT(w.scene, SCENE_PREVIEW);
-    w.players[0].pos = vec3_make(24.0f, 2.5f, 21.0f);
+    w->unlock_all = true;
+    world_load_day(w, 15);
+    ASSERT_EQ_INT(w->scene, SCENE_PREVIEW);
+    w->players[0].pos = vec3_make(64.5f, 2.5f, 59.5f);
     in[0].buttons = 0;
-    world_step(&w, in, WORLD_FIXED_DT);
-    ASSERT_TRUE((w.shard_mask & (1u << 14)) != 0u);
+    world_step(w, in, WORLD_FIXED_DT);
+    ASSERT_TRUE((w->shard_mask & (1u << 14)) != 0u);
 
     /* Walk into return portal -> back to hub */
-    w.players[0].pos = w.return_portal_pos;
-    world_step(&w, in, WORLD_FIXED_DT);
-    ASSERT_EQ_INT(w.scene, SCENE_HUB);
+    w->players[0].pos = w->return_portal_pos;
+    world_step(w, in, WORLD_FIXED_DT);
+    ASSERT_EQ_INT(w->scene, SCENE_HUB);
 
-    /* Player damage, death, and respawn on Day 1 */
-    world_load_day(&w, 1);
-    w.players[0].hp = 5;
-    w.players[0].armor = 0;
-    w.projectiles[0].active = true;
-    w.projectiles[0].kind = PROJ_BOSS_ROCKET;
-    w.projectiles[0].owner_player = -1;
-    w.projectiles[0].pos = vec3_add(w.players[0].pos, vec3_make(0, 1.0f, 0));
-    w.projectiles[0].vel = vec3_make(0, 0, 0);
-    w.projectiles[0].life = 1.0f;
-    world_step(&w, in, WORLD_FIXED_DT);
-    ASSERT_EQ_INT(w.players[0].hp, 0);
-    for (int t = 0; t < 130; ++t) world_step(&w, in, WORLD_FIXED_DT);
-    ASSERT_EQ_INT(w.players[0].hp, 100);
+    /* Day 1 edge cases: locked door feedback, early nuke-exit guard, weapon cycling, safe vent un-shrink */
+    world_load_day(w, 1);
+
+    /* Try opening Blue Door without Blue Keycard */
+    w->players[0].pos = vec3_make(28.0f, 1.0f, 74.0f);
+    in[0].buttons = INP_USE;
+    world_step(w, in, WORLD_FIXED_DT);
+    ASSERT_FALSE(w->doors[0].open);
+    in[0].buttons = 0;
+    world_step(w, in, WORLD_FIXED_DT);
+
+    /* Try hitting Nuke-Exit before Cinema/Boss completed */
+    w->players[0].pos = vec3_make(30.5f, 12.0f, 17.5f);
+    in[0].buttons = INP_USE;
+    world_step(w, in, WORLD_FIXED_DT);
+    ASSERT_EQ_INT(w->scene, SCENE_DAY01);
+    in[0].buttons = 0;
+    world_step(w, in, WORLD_FIXED_DT);
+
+    /* Weapon cycling skips unowned Shotgun, then falls back to Pistol if shells == 0 */
+    w->players[0].weapon = WEAP_PISTOL;
+    w->players[0].has_shotgun = false;
+    in[0].buttons = INP_NEXT_WEAP;
+    world_step(w, in, WORLD_FIXED_DT);
+    ASSERT_EQ_INT(w->players[0].weapon, WEAP_SHRINKER);
+    in[0].buttons = 0;
+    world_step(w, in, WORLD_FIXED_DT);
+
+    w->players[0].has_shotgun = true;
+    w->players[0].weapon = WEAP_SHOTGUN;
+    w->players[0].ammo_shells = 0;
+    in[0].buttons = INP_FIRE;
+    world_step(w, in, WORLD_FIXED_DT);
+    ASSERT_EQ_INT(w->players[0].weapon, WEAP_PISTOL);
+    in[0].buttons = 0;
+
+    /* Safe anti-stuck un-shrink inside 1-voxel air vent at (15.5, 1.0, 59.5) */
+    w->players[0].pos = vec3_make(15.5f, 1.0f, 59.5f);
+    w->players[0].self_shrunk_timer = 0.01f;
+    world_step(w, in, WORLD_FIXED_DT);
+    ASSERT_TRUE(w->players[0].self_shrunk_timer > 0.0f); /* Refuses to stand up under vent ceiling */
+    w->players[0].pos = vec3_make(15.5f, 1.0f, 54.5f);  /* Clear inside Projection Booth */
+    w->players[0].self_shrunk_timer = 0.01f;
+    world_step(w, in, WORLD_FIXED_DT);
+    ASSERT_NEAR(w->players[0].self_shrunk_timer, 0.0f, 1e-5f);
+
+    /* Shrink-Ray deals direct damage to mechanical Turret (enemy #10) instead of shrinking */
+    int turret_hp_before = w->enemies[10].hp;
+    w->projectiles[0].active = true;
+    w->projectiles[0].kind = PROJ_SHRINK_ORB;
+    w->projectiles[0].owner_player = 0;
+    w->projectiles[0].reflected = false;
+    w->projectiles[0].pos = vec3_add(w->enemies[10].pos, vec3_make(0, 0.9f, 0));
+    w->projectiles[0].vel = vec3_make(0, 0, 0);
+    w->projectiles[0].life = 1.0f;
+    world_step(w, in, WORLD_FIXED_DT);
+    ASSERT_TRUE(w->enemies[10].hp < turret_hp_before);
+
+    /* Player damage, death, and respawn at checkpoint preserving acquired keys & shotgun */
+    w->players[0].keys = KEY_BLUE;
+    w->players[0].has_shotgun = true;
+    w->players[0].hp = 5;
+    w->players[0].armor = 0;
+    w->projectiles[1].active = true;
+    w->projectiles[1].kind = PROJ_BOSS_ROCKET;
+    w->projectiles[1].owner_player = -1;
+    w->projectiles[1].pos = vec3_add(w->players[0].pos, vec3_make(0, 1.0f, 0));
+    w->projectiles[1].vel = vec3_make(0, 0, 0);
+    w->projectiles[1].life = 1.0f;
+    world_step(w, in, WORLD_FIXED_DT);
+    ASSERT_EQ_INT(w->players[0].hp, 0);
+    for (int t = 0; t < 130; ++t) world_step(w, in, WORLD_FIXED_DT);
+    ASSERT_EQ_INT(w->players[0].hp, 100);
+    ASSERT_TRUE(w->players[0].has_shotgun);
+    ASSERT_TRUE((w->players[0].keys & KEY_BLUE) != 0u);
 }
 
 int main(void) {
     RUN_TEST(test_math3d_vectors_and_angles);
     RUN_TEST(test_math3d_matrices_and_collisions);
     RUN_TEST(test_calendar_gating_and_progress);
-    RUN_TEST(test_voxel_world_and_mesher);
+    RUN_TEST(test_voxel_world_and_chunked_mesher);
     RUN_TEST(test_net_proto_and_room_codes);
     RUN_TEST(test_touch_controller);
     RUN_TEST(test_retro_audio_synth);

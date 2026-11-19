@@ -138,7 +138,7 @@
   </div>
 
   <div id="statusBar">
-    Loading WASM... | Click canvas to aim | WASD Move · Space/Hold Jetpack · LMB Fire · RMB Detonate · 1-3 Weapons · R Holo · E Use
+    Loading WASM... | Click canvas to aim | WASD Move · Space/Hold Jetpack · LMB Fire · RMB Detonate · 1-5 Weapons · R Holo · E Use
   </div>
 
   <script src="webrtc_bridge.js"></script>
@@ -154,6 +154,9 @@
     const params = new URLSearchParams(window.location.search);
     if (params.get("unlock") === "strict") unlockAll = false;
     if (params.get("unlock") === "all") unlockAll = true;
+    const startDay = parseInt(params.get("day") || "0", 10);
+    const wasmArgs = [unlockAll ? "--unlock-all" : "--strict-calendar"];
+    if (startDay >= 1 && startDay <= 24) wasmArgs.push("--day=" + startDay);
 
     function syncViewportSize() {
       const w = Math.max(1, Math.floor(window.innerWidth));
@@ -167,13 +170,16 @@
 
     window.Module = {
       canvas: canvas,
+      arguments: wasmArgs,
       print: (txt) => console.log("[SWIETA]", txt),
       printErr: (txt) => console.warn("[SWIETA]", txt),
       onRuntimeInitialized: () => {
-        statusEl.textContent = "Ready! Click canvas to lock mouse | WASD Move · Space/Hold Jetpack · LMB Fire · RMB Detonate · 1-3 Weap · R Holo · E Use";
-        syncViewportSize();
-        if (Module._swieta_set_unlock_all) Module._swieta_set_unlock_all(unlockAll ? 1 : 0);
-        if (touchOn && Module._swieta_toggle_touch) Module._swieta_toggle_touch(1);
+        statusEl.textContent = "Click canvas to aim | WASD Move · Space Jetpack · LMB Fire · RMB Bomb · 1-5 Weap · R Holo · E Use";
+        setTimeout(() => {
+          syncViewportSize();
+          if (Module._swieta_set_unlock_all) Module._swieta_set_unlock_all(unlockAll ? 1 : 0);
+          if (touchOn && Module._swieta_toggle_touch) Module._swieta_toggle_touch(1);
+        }, 80);
         document.getElementById("btnUnlock").textContent = unlockAll ? "Unlock: ON" : "Unlock: STRICT";
         if (window.SwietaXR) window.SwietaXR.init(canvas, Module);
         if (window.SwietaNet) window.SwietaNet.init(Module);
@@ -213,7 +219,7 @@
     document.getElementById("btnMpClose").onclick = () => { document.getElementById("mpModal").style.display = "none"; };
     document.getElementById("btnXR").onclick = () => window.SwietaXR && window.SwietaXR.toggleSession();
     document.getElementById("btnHelp").onclick = () => {
-      alert("SWIETA 2026 CONTROLS:\n\nMOBILE TOUCH:\nLeft Thumb: Move (outer ring sprints)\nRight Drag: Look\nButtons: FIRE / DET (Pipebomb) / JUMP (hold Jetpack) / USE / WEAP / HOLO\n\nDESKTOP:\nWASD: Move · Mouse: Look · 1-3: Pistol/Shrink/Pipebomb · LMB: Fire · RMB: Detonate · Space: Jump/Jetpack · R: Holo · E: Use · H: Hall");
+      alert("SWIETA 2026 CONTROLS:\n\nMOBILE TOUCH:\nLeft Thumb: Move (outer ring sprints)\nRight Drag: Look\nButtons: FIRE / DET (Pipebomb) / JUMP (hold Jetpack) / USE / WEAP (cycles 5 weapons) / HOLO\n\nDESKTOP:\nWASD: Move · Mouse: Look\n1: Pistol · 2: Shotgun (break Pawnshop glass!) · 3: Shrink-Ray (shoot Mirror to self-shrink into vents!) · 4: Pipebomb · 5: Laser Tripmine (plant on walls)\nLMB: Fire · RMB: Detonate · Space/V: Jump/Jetpack · R: Holo-Decoy · E: Use · Tab: Cycle Weapon · H: Grand Hall");
     };
   </script>
   <script async src="swieta2026.js"></script>
