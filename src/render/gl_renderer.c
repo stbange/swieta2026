@@ -593,10 +593,19 @@ static Mat4 compute_light_vp(const GameWorld *w, Vec3 *out_sun_dir) {
     return mat4_mul(proj, view);
 }
 
+static void unbind_all_textures(void) {
+    glActiveTexture(GL_TEXTURE1);
+    glBindTexture(GL_TEXTURE_2D, 0);
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, 0);
+}
+
 static void render_shadow_pass(GlRenderer *r, const GameWorld *w, Mat4 light_vp) {
+    unbind_all_textures();
     glBindFramebuffer(GL_FRAMEBUFFER, r->shadow_fbo);
     glViewport(0, 0, SHADOW_SIZE, SHADOW_SIZE);
     glEnable(GL_DEPTH_TEST);
+    glDisable(GL_BLEND);
     glClear(GL_DEPTH_BUFFER_BIT);
     glUseProgram(r->prog_shadow);
     glUniformMatrix4fv(glGetUniformLocation(r->prog_shadow, "uLightVP"), 1, GL_FALSE, light_vp.m);
@@ -671,10 +680,13 @@ static void render_scene_view(GlRenderer *r, const GameWorld *w, Mat4 proj, Mat4
     glUniform4fv(glGetUniformLocation(r->prog_world, "uLightPosRad"), 12, lpos);
     glUniform4fv(glGetUniformLocation(r->prog_world, "uLightColInt"), 12, lcol);
 
+    /* Explicitly bind non-FBO white_tex on unit 0 so WebGL2 never sees retro_color_tex feedback! */
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, r->white_tex);
+    glUniform1i(glGetUniformLocation(r->prog_world, "uTex"), 0);
     glActiveTexture(GL_TEXTURE1);
     glBindTexture(GL_TEXTURE_2D, r->shadow_tex);
     glUniform1i(glGetUniformLocation(r->prog_world, "uShadowMap"), 1);
-    glUniform1i(glGetUniformLocation(r->prog_world, "uTex"), 0);
 
     /* 1. Draw Voxel World */
     Mat4 ident = mat4_identity();
@@ -698,9 +710,9 @@ static void render_scene_view(GlRenderer *r, const GameWorld *w, Mat4 proj, Mat4
             float pg = unlocked ? (meta ? meta->color_g : 0.7f) : 0.48f;
             float pb = unlocked ? (meta ? meta->color_b : 1.0f) : 0.62f;
             if (done) { pr = 1.0f; pg = 0.86f; pb = 0.25f; }
-            Vec3 p = vec3_add(w->portals[i].pos, vec3_make(0.5f, 1.5f, 0.5f));
+            Vec3 p = vec3_add(w->portals[i].pos, vec3_make(0.0f, 1.5f, 0.5f));
             bool x_wall = (w->portals[i].pos.x <= 5.0f || w->portals[i].pos.x >= 42.0f);
-            Vec3 sc = x_wall ? vec3_make(0.18f, 2.6f, 1.6f) : vec3_make(1.6f, 2.6f, 0.18f);
+            Vec3 sc = x_wall ? vec3_make(0.18f, 2.6f, 1.8f) : vec3_make(1.8f, 2.6f, 0.18f);
             draw_colored_box(r, r->prog_world, mat4_mul(mat4_translate(p), mat4_scale(sc)),
                              pr, pg, pb, unlocked ? 0.88f : 0.55f, unlocked ? 0.85f : 0.15f);
         }
@@ -733,7 +745,6 @@ static void render_scene_view(GlRenderer *r, const GameWorld *w, Mat4 proj, Mat4
         float fl = (e->hit_flash > 0.0f) ? 1.0f : 0.0f;
         if (e->kind == ENEMY_BOSS_MECH) {
             float bob = 0.08f * sinf(e->anim_time * 5.0f);
-            /* Articulated 3D low-poly Battle-Mech */
             draw_colored_box(r, r->prog_world,
                              mat4_mul(mat4_translate(vec3_add(e->pos, vec3_make(0, 1.6f + bob, 0))),
                              mat4_mul(mat4_rotate_y(-e->yaw), mat4_scale(vec3_make(1.7f, 1.4f, 1.3f)))),
@@ -746,7 +757,6 @@ static void render_scene_view(GlRenderer *r, const GameWorld *w, Mat4 proj, Mat4
                              mat4_mul(mat4_translate(vec3_add(e->pos, vec3_make(0.55f, 0.6f, 0))),
                                       mat4_scale(vec3_make(0.45f, 1.2f, 0.55f))),
                              0.35f, 0.38f, 0.42f, 1.0f, 0.05f);
-            /* Glowing visor */
             draw_colored_box(r, r->prog_world,
                              mat4_mul(mat4_translate(vec3_add(e->pos, vec3_make(0, 1.95f + bob, 0))),
                                       mat4_scale(vec3_make(1.0f, 0.28f, 1.42f))),
@@ -759,12 +769,10 @@ static void render_scene_view(GlRenderer *r, const GameWorld *w, Mat4 proj, Mat4
         }
     }
 
-    /* Holo-Decoy Sprite */
     if (w->decoy.active) {
         draw_billboard_sprite(r, w->decoy.pos, 1.1f, 1.7f, 2, cam_yaw, 0.4f, 0.95f, 1.0f, 0.9f);
     }
 
-    /* Pickups & Projectiles & Explosions */
     for (int i = 0; i < WORLD_MAX_PICKUPS; ++i) {
         const Pickup *pk = &w->pickups[i];
         if (!pk->active) continue;
@@ -817,7 +825,7 @@ static void render_scene_view(GlRenderer *r, const GameWorld *w, Mat4 proj, Mat4
     }
 }
 
-/* Minimal 2D HUD batcher + 5x7 uppercase bitmap font */
+/* Minimal 2D HUD batcher + 3x5 retro pixel font */
 typedef struct { float x, y, r, g, b, a; } HudVert;
 static HudVert g_hud_buf[16384];
 static int g_hud_count = 0;
@@ -833,7 +841,6 @@ static void hud_rect(float x, float y, float w, float h, float r, float g, float
 }
 
 static const uint8_t *glyph_rows(char c) {
-    /* 3x5 ultra-crisp retro pixel font (3 bits per row, 5 rows) */
     static const uint8_t kSpace[5] = {0,0,0,0,0};
     static const uint8_t kA[5]={2,5,7,5,5}, kB[5]={6,5,6,5,6}, kC[5]={3,4,4,4,3}, kD[5]={6,5,5,5,6};
     static const uint8_t kE[5]={7,4,6,4,7}, kF[5]={7,4,6,4,4}, kG[5]={3,4,5,5,3}, kH[5]={5,5,7,5,5};
@@ -864,18 +871,19 @@ static const uint8_t *glyph_rows(char c) {
     }
 }
 
-static void hud_text(float x, float y, float scale_x, float scale_y, const char *s, float r, float g, float b, float a) {
+static void hud_text(float x, float y, float px_w, float px_h, const char *s, float r, float g, float b, float a) {
     float cx = x;
     for (; *s; ++s) {
+        if (cx > 0.96f) break;
         const uint8_t *rows = glyph_rows(*s);
         for (int ry = 0; ry < 5; ++ry) {
             for (int rx = 0; rx < 3; ++rx) {
                 if (rows[ry] & (1u << (2 - rx))) {
-                    hud_rect(cx + (float)rx * scale_x, y + (float)ry * scale_y, scale_x, scale_y, r, g, b, a);
+                    hud_rect(cx + (float)rx * px_w, y + (float)ry * px_h, px_w, px_h, r, g, b, a);
                 }
             }
         }
-        cx += scale_x * 4.0f;
+        cx += px_w * 4.0f;
     }
 }
 
@@ -892,9 +900,15 @@ static void flush_hud(GlRenderer *r) {
     g_hud_count = 0;
 }
 
-static void draw_player_hud(GlRenderer *r, const GameWorld *w, int pi) {
+static void draw_player_hud(GlRenderer *r, const GameWorld *w, int pi, int vw, int vh) {
     const Player *p = &w->players[pi];
     g_hud_count = 0;
+
+    float aspect = (float)vw / (float)(vh > 0 ? vh : 1);
+    float px_w = (aspect < 1.0f) ? 0.0042f : 0.0044f;
+    float px_h = px_w * aspect;
+    float ch_w = 0.016f / (aspect < 1.0f ? 1.0f : aspect);
+    float ch_h = ch_w * aspect;
 
     /* Damage / stomp flash */
     if (p->damage_flash > 0.0f) {
@@ -904,70 +918,79 @@ static void draw_player_hud(GlRenderer *r, const GameWorld *w, int pi) {
         hud_rect(0, 0, 1, 1, 0.2f, 1.0f, 0.35f, p->stomp_flash * 0.45f);
     }
 
-    /* Crosshair */
-    hud_rect(0.495f, 0.485f, 0.010f, 0.030f, 1.0f, 0.95f, 0.3f, 0.85f);
-    hud_rect(0.488f, 0.495f, 0.024f, 0.010f, 1.0f, 0.95f, 0.3f, 0.85f);
+    /* Aspect-correct Crosshair */
+    hud_rect(0.5f - ch_w * 0.15f, 0.5f - ch_h * 0.5f, ch_w * 0.3f, ch_h, 1.0f, 0.95f, 0.3f, 0.9f);
+    hud_rect(0.5f - ch_w * 0.5f, 0.5f - ch_h * 0.15f, ch_w, ch_h * 0.3f, 1.0f, 0.95f, 0.3f, 0.9f);
 
-    /* Top banner */
+    /* Top banner (offset cleanly below compact toolbar) */
+    float banner_y = (aspect < 1.0f) ? 0.08f : 0.11f;
     if (w->banner_timer > 0.0f && w->banner[0] != '\0') {
-        hud_rect(0.04f, 0.03f, 0.92f, 0.075f, 0.04f, 0.04f, 0.09f, 0.78f);
-        hud_text(0.06f, 0.05f, 0.0042f, 0.0075f, w->banner, 1.0f, 0.92f, 0.45f, 1.0f);
+        hud_rect(0.03f, banner_y, 0.94f, px_h * 8.5f, 0.04f, 0.04f, 0.09f, 0.80f);
+        hud_text(0.05f, banner_y + px_h * 1.8f, px_w * 0.85f, px_h * 0.85f, w->banner, 1.0f, 0.92f, 0.45f, 1.0f);
     }
 
     /* Nearby Portal prompt in Grand Festive Hall */
     if (w->scene == SCENE_HUB) {
-        const PortalGate *near = world_find_nearby_portal(w, p->pos, 4.0f);
+        const PortalGate *near = world_find_nearby_portal(w, p->pos, 4.5f);
         if (near) {
             const PortalMeta *meta = swieta_portal_meta(near->day);
             bool unlocked = swieta_portal_is_unlocked(near->day, w->now, w->unlock_all);
             char tip[128];
-            snprintf(tip, sizeof(tip), "DAY %02d: %s - %s [%s]",
+            snprintf(tip, sizeof(tip), "DAY %02d: %s [%s]",
                      near->day,
                      meta ? meta->portal_title : "?",
-                     meta ? meta->inspiration : "?",
                      unlocked ? "ENTER" : "LOCKED");
-            hud_rect(0.10f, 0.13f, 0.80f, 0.065f, 0.05f, 0.07f, 0.14f, 0.82f);
-            hud_text(0.12f, 0.148f, 0.0045f, 0.0075f, tip,
+            float ty = banner_y + px_h * 10.0f;
+            hud_rect(0.08f, ty, 0.84f, px_h * 8.0f, 0.05f, 0.07f, 0.14f, 0.84f);
+            hud_text(0.10f, ty + px_h * 1.5f, px_w, px_h, tip,
                      unlocked ? 0.35f : 0.95f, unlocked ? 1.0f : 0.45f, unlocked ? 0.55f : 0.45f, 1.0f);
         }
     }
 
     /* Bottom status bar */
-    hud_rect(0.02f, 0.88f, 0.96f, 0.10f, 0.05f, 0.05f, 0.10f, 0.80f);
+    float bar_h = px_h * 9.5f;
+    float bar_y = ((aspect < 1.0f) ? 0.985f : 0.942f) - bar_h;
+    hud_rect(0.02f, bar_y, 0.96f, bar_h, 0.05f, 0.05f, 0.10f, 0.82f);
     const char *wname = (p->weapon == WEAP_PISTOL) ? "PISTOL" :
-                        (p->weapon == WEAP_SHRINKER ? "SHRINK" : "PIPEBOMB");
+                        (p->weapon == WEAP_SHRINKER ? "SHRINK" : "BOMB");
     char stats[128];
-    snprintf(stats, sizeof(stats), "P%d HP:%d ARM:%d JET:%d  %s SH:%d PB:%d  SCR:%d",
-             pi + 1, p->hp, p->armor, (int)p->jetpack_fuel, wname, p->ammo_shrink, p->ammo_pipebomb, p->score);
-    hud_text(0.04f, 0.91f, 0.0048f, 0.0085f, stats, 0.95f, 0.96f, 1.0f, 1.0f);
+    snprintf(stats, sizeof(stats), "P%d HP:%d AR:%d J:%d %s S:%d B:%d",
+             pi + 1, p->hp, p->armor, (int)p->jetpack_fuel, wname, p->ammo_shrink, p->ammo_pipebomb);
+    hud_text(0.04f, bar_y + px_h * 2.2f, px_w, px_h, stats, 0.95f, 0.96f, 1.0f, 1.0f);
 
     flush_hud(r);
 }
 
-static void draw_touch_overlay(GlRenderer *r, const TouchController *tc) {
+static void draw_touch_overlay(GlRenderer *r, const TouchController *tc, int win_w, int win_h) {
     if (!tc || !tc->enabled) return;
     g_hud_count = 0;
 
-    /* Left virtual stick */
+    float aspect = (float)win_w / (float)(win_h > 0 ? win_h : 1);
+    float px_w = 0.0042f;
+    float px_h = px_w * aspect;
+
+    /* Left virtual stick (aspect-square) */
     float sx = tc->stick_origin_x;
     float sy = tc->stick_origin_y;
-    hud_rect(sx - 0.08f, sy - 0.11f, 0.16f, 0.22f, 0.2f, 0.8f, 1.0f, 0.22f);
-    float kx = sx + tc->move_x * 0.06f;
-    float ky = sy - tc->move_y * 0.08f;
-    hud_rect(kx - 0.03f, ky - 0.04f, 0.06f, 0.08f, 0.4f, 0.95f, 1.0f, 0.65f);
+    float r_w = 0.09f;
+    float r_h = r_w * aspect;
+    hud_rect(sx - r_w, sy - r_h, r_w * 2.0f, r_h * 2.0f, 0.2f, 0.8f, 1.0f, 0.24f);
+    float kx = sx + tc->move_x * r_w * 0.7f;
+    float ky = sy - tc->move_y * r_h * 0.7f;
+    hud_rect(kx - r_w * 0.35f, ky - r_h * 0.35f, r_w * 0.7f, r_h * 0.7f, 0.4f, 0.95f, 1.0f, 0.70f);
 
     /* Right action buttons */
     int count = 0;
     const TouchButtonRect *btns = touch_get_layout(&count);
     for (int i = 0; i < count; ++i) {
         bool pressed = (tc->buttons & btns[i].bit) != 0u;
-        float bw = btns[i].radius * 1.55f;
-        float bh = btns[i].radius * 1.85f;
+        float bw = btns[i].radius * 1.45f;
+        float bh = bw * aspect;
         hud_rect(btns[i].cx - bw * 0.5f, btns[i].cy - bh * 0.5f, bw, bh,
                  pressed ? 1.0f : 0.95f, pressed ? 0.3f : 0.85f, pressed ? 0.7f : 0.35f,
-                 pressed ? 0.68f : 0.30f);
-        hud_text(btns[i].cx - bw * 0.36f, btns[i].cy - 0.018f, 0.0045f, 0.0075f,
-                 btns[i].label, 1.0f, 1.0f, 1.0f, 0.92f);
+                 pressed ? 0.70f : 0.32f);
+        hud_text(btns[i].cx - bw * 0.38f, btns[i].cy - px_h * 2.5f, px_w, px_h,
+                 btns[i].label, 1.0f, 1.0f, 1.0f, 0.95f);
     }
     flush_hud(r);
 }
@@ -975,6 +998,12 @@ static void draw_touch_overlay(GlRenderer *r, const TouchController *tc) {
 void gl_renderer_render_frame(GlRenderer *r, GameWorld *w, const TouchController *touch, int win_w, int win_h) {
     if (!r || !r->initialized || !w || win_w <= 0 || win_h <= 0) return;
     sync_voxel_mesh_if_dirty(r, w);
+
+    /* Keep retro FBO orientation matched to viewport orientation (crisp square retro pixels on portrait phones!) */
+    bool portrait = win_h > win_w;
+    if ((portrait && r->retro_w > r->retro_h) || (!portrait && r->retro_h > r->retro_w)) {
+        gl_renderer_set_retro_res(r, r->retro_h, r->retro_w);
+    }
 
     Vec3 sun_dir;
     Mat4 light_vp = compute_light_vp(w, &sun_dir);
@@ -994,8 +1023,13 @@ void gl_renderer_render_frame(GlRenderer *r, GameWorld *w, const TouchController
         const Player *p = &w->players[pi];
         int vx = 0, vy = 0, vw = win_w, vh = win_h;
         if (pcount == 2) {
-            vw = win_w / 2;
-            vx = pi * vw;
+            if (portrait) {
+                vh = win_h / 2;
+                vy = (1 - pi) * vh;
+            } else {
+                vw = win_w / 2;
+                vx = pi * vw;
+            }
         } else if (pcount > 2) {
             vw = win_w / 2;
             vh = win_h / 2;
@@ -1004,21 +1038,25 @@ void gl_renderer_render_frame(GlRenderer *r, GameWorld *w, const TouchController
         }
 
         /* Pass 2: Render player view into low-res retro FBO */
+        unbind_all_textures();
         glBindFramebuffer(GL_FRAMEBUFFER, r->retro_fbo);
         glViewport(0, 0, r->retro_w, r->retro_h);
         Vec3 eye = player_eye_pos(p);
         Vec3 fwd = player_forward(p);
         float aspect = (float)vw / (float)(vh > 0 ? vh : 1);
-        Mat4 proj = mat4_perspective(70.0f * SW_PI / 180.0f, aspect, 0.1f, 90.0f);
+        float fovy = (aspect < 1.0f) ? 85.0f : 70.0f;
+        Mat4 proj = mat4_perspective(fovy * SW_PI / 180.0f, aspect, 0.1f, 90.0f);
         Mat4 view = mat4_look_at(eye, vec3_add(eye, fwd), vec3_make(0, 1, 0));
         render_scene_view(r, w, proj, view, eye, p->yaw, pi, light_vp, sun_dir);
 
         /* Pass 3: Crisp Nearest-Neighbor Retro Present + Bayer Dither to Player Viewport */
+        unbind_all_textures();
         glBindFramebuffer(GL_FRAMEBUFFER, 0);
         glViewport(vx, vy, vw, vh);
         glEnable(GL_SCISSOR_TEST);
         glScissor(vx, vy, vw, vh);
         glDisable(GL_DEPTH_TEST);
+        glDisable(GL_BLEND);
         glUseProgram(r->prog_post);
         glActiveTexture(GL_TEXTURE0);
         glBindTexture(GL_TEXTURE_2D, r->retro_color_tex);
@@ -1027,16 +1065,17 @@ void gl_renderer_render_frame(GlRenderer *r, GameWorld *w, const TouchController
         glUniform1i(glGetUniformLocation(r->prog_post, "uDither"), r->dither_enabled ? 1 : 0);
         glBindVertexArray(r->quad_vao);
         glDrawArrays(GL_TRIANGLES, 0, 6);
+        unbind_all_textures();
 
         /* Pass 4: Crisp HUD per player */
-        draw_player_hud(r, w, pi);
+        draw_player_hud(r, w, pi, vw, vh);
         glDisable(GL_SCISSOR_TEST);
     }
 
     /* Full-screen Adaptive Mobile Touch Overlay (when active) */
     if (touch && touch->enabled) {
         glViewport(0, 0, win_w, win_h);
-        draw_touch_overlay(r, touch);
+        draw_touch_overlay(r, touch, win_w, win_h);
     }
 }
 
@@ -1049,6 +1088,7 @@ void gl_renderer_render_xr_eye(GlRenderer *r, GameWorld *w, const Mat4 *proj, co
     Mat4 light_vp = compute_light_vp(w, &sun_dir);
     render_shadow_pass(r, w, light_vp);
 
+    unbind_all_textures();
     glBindFramebuffer(GL_FRAMEBUFFER, target_fbo);
     glViewport(vx, vy, vw, vh);
     glEnable(GL_SCISSOR_TEST);
@@ -1056,5 +1096,6 @@ void gl_renderer_render_xr_eye(GlRenderer *r, GameWorld *w, const Mat4 *proj, co
 
     Vec3 eye = player_eye_pos(&w->players[0]);
     render_scene_view(r, w, *proj, *view, eye, w->players[0].yaw, -1, light_vp, sun_dir);
+    unbind_all_textures();
     glDisable(GL_SCISSOR_TEST);
 }

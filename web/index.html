@@ -2,12 +2,12 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
   <title>ŚWIĘTA 2026 — The Grand Hall of 24 Portals</title>
   <style>
     :root {
       --bg: #0c0a14;
-      --panel: rgba(18, 16, 30, 0.90);
+      --panel: rgba(18, 16, 30, 0.92);
       --gold: #ffd452;
       --neon: #ff3bb8;
       --cyan: #2ae8ff;
@@ -22,18 +22,32 @@
     }
     #stage {
       position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
-      background: radial-gradient(circle at center, #1b152a 0%, #090810 100%);
+      background: #090810;
     }
     #canvas {
-      width: 100%; height: 100%; display: block;
+      width: 100vw; height: 100dvh; display: block;
       image-rendering: pixelated; image-rendering: crisp-edges;
       touch-action: none;
+    }
+    #menuToggle {
+      position: fixed; top: 8px; right: 8px; z-index: 25;
+      background: var(--panel); color: var(--gold);
+      border: 1px solid rgba(255, 212, 82, 0.55);
+      border-radius: 6px; padding: 5px 10px; font-size: 12px; font-weight: bold;
+      display: none;
     }
     #topbar {
       position: fixed; top: 8px; right: 8px; z-index: 20;
       display: flex; flex-wrap: wrap; gap: 6px; align-items: center;
       background: var(--panel); border: 1px solid rgba(255, 212, 82, 0.35);
       border-radius: 6px; padding: 6px 8px; font-size: 12px;
+      max-width: calc(100vw - 16px);
+    }
+    @media (max-width: 720px) {
+      #menuToggle { display: inline-block; }
+      #topbar { top: 42px; display: none; }
+      #topbar.open { display: flex; }
+      #statusBar { display: none; }
     }
     button, select, input {
       background: #1d1933; color: var(--text);
@@ -59,8 +73,8 @@
       font-family: inherit; font-size: 11px; user-select: text; -webkit-user-select: text;
     }
     #statusBar {
-      position: fixed; bottom: 6px; left: 8px; z-index: 20;
-      background: rgba(12, 10, 20, 0.72); padding: 4px 8px;
+      position: fixed; bottom: 4px; left: 8px; z-index: 20;
+      background: rgba(12, 10, 20, 0.72); padding: 3px 8px;
       border-radius: 4px; font-size: 11px; color: #b7c2e6;
       pointer-events: none;
     }
@@ -72,6 +86,8 @@
   <div id="stage">
     <canvas id="canvas" oncontextmenu="event.preventDefault()" tabindex="0"></canvas>
   </div>
+
+  <button id="menuToggle">☰ MENU</button>
 
   <div id="topbar">
     <span class="badge">SWIETA 2026</span>
@@ -130,12 +146,24 @@
   <script>
     const statusEl = document.getElementById("statusBar");
     const canvas = document.getElementById("canvas");
+    const topbar = document.getElementById("topbar");
     let unlockAll = true;
-    let touchOn = window.matchMedia && window.matchMedia("(pointer: coarse)").matches;
+    let touchOn = ("ontouchstart" in window) || (navigator.maxTouchPoints > 0) ||
+                  (window.matchMedia && window.matchMedia("(pointer: coarse)").matches);
 
     const params = new URLSearchParams(window.location.search);
     if (params.get("unlock") === "strict") unlockAll = false;
     if (params.get("unlock") === "all") unlockAll = true;
+
+    function syncViewportSize() {
+      const w = Math.max(1, Math.floor(window.innerWidth));
+      const h = Math.max(1, Math.floor(window.innerHeight));
+      if (window.Module && Module._swieta_resize) {
+        Module._swieta_resize(w, h);
+      }
+    }
+    window.addEventListener("resize", syncViewportSize);
+    window.addEventListener("orientationchange", () => setTimeout(syncViewportSize, 150));
 
     window.Module = {
       canvas: canvas,
@@ -143,6 +171,7 @@
       printErr: (txt) => console.warn("[SWIETA]", txt),
       onRuntimeInitialized: () => {
         statusEl.textContent = "Ready! Click canvas to lock mouse | WASD Move · Space/Hold Jetpack · LMB Fire · RMB Detonate · 1-3 Weap · R Holo · E Use";
+        syncViewportSize();
         if (Module._swieta_set_unlock_all) Module._swieta_set_unlock_all(unlockAll ? 1 : 0);
         if (touchOn && Module._swieta_toggle_touch) Module._swieta_toggle_touch(1);
         document.getElementById("btnUnlock").textContent = unlockAll ? "Unlock: ON" : "Unlock: STRICT";
@@ -151,8 +180,15 @@
       }
     };
 
-    document.getElementById("btnHub").onclick = () => Module._swieta_jump_to_day && Module._swieta_jump_to_day(0);
-    document.getElementById("btnDay1").onclick = () => Module._swieta_jump_to_day && Module._swieta_jump_to_day(1);
+    document.getElementById("menuToggle").onclick = () => topbar.classList.toggle("open");
+    document.getElementById("btnHub").onclick = () => {
+      Module._swieta_jump_to_day && Module._swieta_jump_to_day(0);
+      topbar.classList.remove("open");
+    };
+    document.getElementById("btnDay1").onclick = () => {
+      Module._swieta_jump_to_day && Module._swieta_jump_to_day(1);
+      topbar.classList.remove("open");
+    };
     document.getElementById("selSplit").onchange = (e) => {
       if (Module._swieta_set_split_screen) Module._swieta_set_split_screen(parseInt(e.target.value, 10));
     };
@@ -168,12 +204,16 @@
     document.getElementById("btnTouch").onclick = () => {
       touchOn = !touchOn;
       if (Module._swieta_toggle_touch) Module._swieta_toggle_touch(touchOn ? 1 : 0);
+      topbar.classList.remove("open");
     };
-    document.getElementById("btnMP").onclick = () => { document.getElementById("mpModal").style.display = "flex"; };
+    document.getElementById("btnMP").onclick = () => {
+      document.getElementById("mpModal").style.display = "flex";
+      topbar.classList.remove("open");
+    };
     document.getElementById("btnMpClose").onclick = () => { document.getElementById("mpModal").style.display = "none"; };
     document.getElementById("btnXR").onclick = () => window.SwietaXR && window.SwietaXR.toggleSession();
     document.getElementById("btnHelp").onclick = () => {
-      alert("SWIETA 2026 CONTROLS:\n\nWASD / Arrows: Move\nMouse / Q,Right: Look (Click canvas to capture)\n1/2/3 or Tab: Pistol / Shrink-Ray / Pipebomb\nLeft Click / F: Fire\nRight Click / G: Detonate Pipebombs\nSpace (hold airborne): Jump / Jetpack\nR: Deploy Holo-Decoy\nE: Interact (Cinema Switch / Nuke-Exit / SANTA-BIOS)\nH: Return to Grand Hall\nF1: Playtest Unlock-All | F2: Retro Res | F3: Split-Screen (P2: IJKL + Enter) | F4: Touch Controls");
+      alert("SWIETA 2026 CONTROLS:\n\nMOBILE TOUCH:\nLeft Thumb: Move (outer ring sprints)\nRight Drag: Look\nButtons: FIRE / DET (Pipebomb) / JUMP (hold Jetpack) / USE / WEAP / HOLO\n\nDESKTOP:\nWASD: Move · Mouse: Look · 1-3: Pistol/Shrink/Pipebomb · LMB: Fire · RMB: Detonate · Space: Jump/Jetpack · R: Holo · E: Use · H: Hall");
     };
   </script>
   <script async src="swieta2026.js"></script>

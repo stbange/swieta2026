@@ -325,6 +325,11 @@ EMSCRIPTEN_KEEPALIVE void swieta_set_retro_res(int w, int h) {
     gl_renderer_set_retro_res(&g_app->renderer, w, h);
 }
 
+EMSCRIPTEN_KEEPALIVE void swieta_resize(int w, int h) {
+    if (!g_app || !g_app->window || w <= 0 || h <= 0) return;
+    SDL_SetWindowSize(g_app->window, w, h);
+}
+
 EMSCRIPTEN_KEEPALIVE void swieta_toggle_touch(int enabled) {
     if (!g_app) return;
     touch_set_enabled(&g_app->touch, enabled != 0);

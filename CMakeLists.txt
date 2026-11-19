@@ -78,7 +78,7 @@ if(SWIETA_BUILD_APP)
             "-sFULL_ES3=1"
             "-sALLOW_MEMORY_GROWTH=1"
             "-sINITIAL_MEMORY=33554432"
-            "-sEXPORTED_FUNCTIONS=['_main','_malloc','_free','_swieta_set_split_screen','_swieta_set_unlock_all','_swieta_set_retro_res','_swieta_toggle_touch','_swieta_jump_to_day','_swieta_net_set_role','_swieta_net_on_packet','_swieta_xr_begin_frame','_swieta_xr_render_eye']"
+            "-sEXPORTED_FUNCTIONS=['_main','_malloc','_free','_swieta_set_split_screen','_swieta_set_unlock_all','_swieta_set_retro_res','_swieta_resize','_swieta_toggle_touch','_swieta_jump_to_day','_swieta_net_set_role','_swieta_net_on_packet','_swieta_xr_begin_frame','_swieta_xr_render_eye']"
             "-sEXPORTED_RUNTIME_METHODS=['HEAPU8','HEAPF32','UTF8ToString','stringToUTF8']"
         )
         add_custom_command(TARGET swieta2026 POST_BUILD
